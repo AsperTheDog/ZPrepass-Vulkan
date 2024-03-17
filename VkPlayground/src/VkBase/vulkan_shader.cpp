@@ -3,6 +3,9 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "vulkan_context.hpp"
+#include "vulkan_device.hpp"
+
 shaderc_shader_kind VulkanShader::getKindFromStage(const VkShaderStageFlagBits stage)
 {
 	switch (stage)
@@ -25,13 +28,17 @@ shaderc_shader_kind VulkanShader::getKindFromStage(const VkShaderStageFlagBits s
 	}
 }
 
-uint32_t VulkanShader::getID() const
+void VulkanShader::free()
 {
-	return m_id;
+	if (m_vkHandle != VK_NULL_HANDLE)
+	{
+		vkDestroyShaderModule(VulkanContext::getDevice(m_device).m_vkHandle, m_vkHandle, nullptr);
+		m_vkHandle = VK_NULL_HANDLE;
+	}
 }
 
-VulkanShader::VulkanShader(const VkShaderModule handle, const VkShaderStageFlagBits stage)
-	:  m_id(m_idCounter++), m_vkHandle(handle), m_stage(stage)
+VulkanShader::VulkanShader(const uint32_t device, const VkShaderModule handle, const VkShaderStageFlagBits stage)
+	:  m_vkHandle(handle), m_stage(stage), m_device(device)
 {
 }
 

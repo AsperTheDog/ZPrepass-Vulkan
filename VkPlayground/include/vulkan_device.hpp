@@ -3,22 +3,26 @@
 #include <unordered_map>
 #include <vulkan/vulkan_core.h>
 
-#include "vulkan_buffer.hpp"
-#include "vulkan_gpu.hpp"
+#include "vulkan_base.hpp"
 #include "vulkan_queues.hpp"
-#include "vulkan_command_buffer.hpp"
+#include "vulkan_gpu.hpp"
+#include "vulkan_memory.hpp"
+#include "vulkan_buffer.hpp"
 #include "vulkan_render_pass.hpp"
+#include "vulkan_framebuffer.hpp"
+#include "vulkan_image.hpp"
+#include "vulkan_sync.hpp"
+#include "vulkan_pipeline.hpp"
 #include "vulkan_shader.hpp"
-#include <vulkan_image.hpp>
-#include <vulkan_fence.hpp>
+#include "vulkan_command_buffer.hpp"
 
-class VulkanQueue;
 
-class VulkanDevice
+class VulkanDevice : public VulkanBase
 {
 public:
 
 	void configureOneTimeQueue(QueueSelection queue);
+
 	void initializeOneTimeCommandPool(uint32_t threadID);
 	void initializeCommandPool(const QueueFamily& family, uint32_t threadID, bool secondary);
 	uint32_t createCommandBuffer(const QueueFamily& family, uint32_t threadID, bool isSecondary);
@@ -28,8 +32,10 @@ public:
 	void freeCommandBuffer(const VulkanCommandBuffer& commandBuffer, uint32_t threadID);
 	void freeCommandBuffer(uint32_t id, uint32_t threadID);
 
-	VkFramebuffer createFramebuffer(VkExtent3D size, const VulkanRenderPass& renderPass, const std::vector<VkImageView>& attachments);
-	void freeFramebuffer(VkFramebuffer framebuffer);
+	uint32_t createFramebuffer(VkExtent3D size, const VulkanRenderPass& renderPass, const std::vector<VkImageView>& attachments);
+	VulkanFramebuffer& getFramebuffer(uint32_t id);
+	void freeFramebuffer(uint32_t id);
+	void freeFramebuffer(const VulkanFramebuffer& framebuffer);
 
 	uint32_t createBuffer(VkDeviceSize size, VkBufferUsageFlags usage);
 	VulkanBuffer& getBuffer(uint32_t id);
@@ -41,12 +47,6 @@ public:
 	void freeImage(uint32_t id);
 	void freeImage(const VulkanImage& image);
 
-	void configureStagingBuffer(VkDeviceSize size, const QueueSelection& queue, bool forceAllowStagingMemory = false);
-	void* mapStagingBuffer(VkDeviceSize size, VkDeviceSize offset);
-	void unmapStagingBuffer();
-	void dumpStagingBuffer(VulkanBuffer& buffer, VkDeviceSize size, VkDeviceSize offset, uint32_t threadID);
-	void dumpStagingBuffer(VulkanBuffer& buffer, const std::vector<VkBufferCopy>& regions, uint32_t threadID);
-
 	void disallowMemoryType(uint32_t type);
 	void allowMemoryType(uint32_t type);
 
@@ -55,11 +55,10 @@ public:
 	void freeRenderPass(uint32_t id);
 	void freeRenderPass(const VulkanRenderPass& renderPass);
 
-	VkDescriptorSetLayout createDescriptorSetLayout(const std::vector<VkDescriptorSetLayoutBinding>& bindings);
-	void freeDescriptorSetLayout(VkDescriptorSetLayout layout);
-
-	VkPipelineLayout createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<VkPushConstantRange>& pushConstantRanges);
-	void freePipelineLayout(VkPipelineLayout layout);
+	uint32_t createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<VkPushConstantRange>& pushConstantRanges);
+	VulkanPipelineLayout& getPipelineLayout(uint32_t id);
+	void freePipelineLayout(uint32_t id);
+	void freePipelineLayout(const VulkanPipelineLayout& layout);
 
 	uint32_t createShader(const std::string& filename, VkShaderStageFlagBits stage);
 	VulkanShader& getShader(uint32_t id);
@@ -67,30 +66,38 @@ public:
 	void freeShader(const VulkanShader& shader);
 	void freeAllShaders();
 
-	VkPipeline createPipeline(const VulkanPipelineBuilder& builder, VkPipelineLayout pipelineLayout, uint32_t renderPass, uint32_t subpass);
-	void freePipeline(VkPipeline pipeline);
+	uint32_t createPipeline(const VulkanPipelineBuilder& builder, uint32_t pipelineLayout, uint32_t renderPass, uint32_t subpass);
+	VulkanPipeline& getPipeline(uint32_t id);
+	void freePipeline(uint32_t id);
+	void freePipeline(const VulkanPipeline& pipeline);
 
-	VkSemaphore createSemaphore();
-	void freeSemaphore(VkSemaphore semaphore);
+	uint32_t createSemaphore();
+	VulkanSemaphore& getSemaphore(uint32_t id);
+	void freeSemaphore(uint32_t id);
+	void freeSemaphore(VulkanSemaphore& semaphore);
 
 	uint32_t createFence(bool signaled);
 	VulkanFence& getFence(uint32_t id);
 	void freeFence(uint32_t id);
 	void freeFence(const VulkanFence& fence);
 
-	void waitIdle();
+	void waitIdle() const;
 
-	void free();
+	void configureStagingBuffer(VkDeviceSize size, const QueueSelection& queue, bool forceAllowStagingMemory = false);
+	void* mapStagingBuffer(VkDeviceSize size, VkDeviceSize offset);
+	void unmapStagingBuffer();
+	void dumpStagingBuffer(uint32_t buffer, VkDeviceSize size, VkDeviceSize offset, uint32_t threadID);
+	void dumpStagingBuffer(uint32_t buffer, const std::vector<VkBufferCopy>& regions, uint32_t threadID);
 
 	[[nodiscard]] VulkanQueue getQueue(const QueueSelection& queueSelection) const;
 	[[nodiscard]] VulkanGPU getGPU() const;
 	[[nodiscard]] const VulkanMemoryAllocator& getMemoryAllocator() const;
-	[[nodiscard]] VkSemaphore getStagingBufferSemaphore() const;
+	[[nodiscard]] uint32_t getStagingBufferSemaphore() const;
 
 private:
-	[[nodiscard]] VkDeviceMemory getMemoryHandle(uint32_t chunk) const;
+	void free();
 
-	VulkanBuffer _createBuffer(VkDeviceSize size, VkBufferUsageFlags usage);
+	[[nodiscard]] VkDeviceMemory getMemoryHandle(uint32_t chunk) const;
 
 	struct ThreadCommandInfo
 	{
@@ -106,11 +113,10 @@ private:
 
 	struct StagingBufferInfo
 	{
-		VulkanBuffer stagingBuffer{};
+		uint32_t stagingBuffer = UINT32_MAX;
 		QueueSelection queue{};
 	} m_stagingBufferInfo;
 
-	VulkanDevice() = default;
 	VulkanDevice(VulkanGPU pDevice, VkDevice device);
 
 	VkDevice m_vkHandle;
@@ -118,29 +124,34 @@ private:
 	VulkanGPU m_physicalDevice;
 
 	std::map<uint32_t, ThreadCommandInfo> m_threadCommandInfos;
-	std::vector<VkFramebuffer> m_framebuffers;
+	std::vector<VulkanFramebuffer> m_framebuffers;
 	std::vector<VulkanBuffer> m_buffers;
-	std::unordered_map<uint32_t, std::vector<VulkanCommandBuffer>> m_commandBuffers;
+	std::unordered_map<uint32_t /*threadID*/, std::vector<VulkanCommandBuffer>> m_commandBuffers;
 	std::vector<VulkanRenderPass> m_renderPasses;
-	std::vector<VkDescriptorSetLayout> m_descriptorSetLayouts;
-	std::vector<VkPipelineLayout> m_pipelineLayouts;
+	std::vector<VulkanPipelineLayout> m_pipelineLayouts;
 	std::vector<VulkanShader> m_shaders;
-	std::vector<VkPipeline> m_pipelines;
+	std::vector<VulkanPipeline> m_pipelines;
 	std::vector<VulkanImage> m_images;
-	std::vector<VkSemaphore> m_semaphores;
+	std::vector<VulkanSemaphore> m_semaphores;
 	std::vector<VulkanFence> m_fences;
 
 	VulkanMemoryAllocator m_memoryAllocator;
-	VkSemaphore m_stagingSemaphore = VK_NULL_HANDLE;
+	uint32_t m_stagingSemaphore = UINT32_MAX;
 	QueueSelection m_oneTimeQueue{UINT32_MAX, UINT32_MAX};
 
 	friend class VulkanContext;
 	friend class SDLWindow;
 	friend class VulkanGPU;
+
 	friend class VulkanResource;
 	friend class VulkanMemoryAllocator;
 	friend class VulkanBuffer;
 	friend class VulkanRenderPass;
 	friend class VulkanImage;
 	friend class VulkanFence;
+	friend class VulkanSemaphore;
+	friend class VulkanPipeline;
+	friend class VulkanPipelineLayout;
+	friend class VulkanFramebuffer;
+	friend class VulkanShader;
 };

@@ -2,6 +2,8 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "vulkan_base.hpp"
+
 
 class VulkanBuffer;
 class VulkanQueue;
@@ -9,54 +11,47 @@ class VulkanFence;
 class VulkanRenderPass;
 class VulkanDevice;
 
-class VulkanCommandBuffer
+class VulkanCommandBuffer : public VulkanBase
 {
 public:
 	void beginRecording(VkCommandBufferUsageFlags flags);
 	void endRecording();
-	void submit(const VulkanQueue& queue, const std::vector<std::pair<VkSemaphore, VkSemaphoreWaitFlags>>& waitSemaphoreData, const std::vector<VkSemaphore>& signalSemaphores, const VulkanFence* fence) const;
+	void submit(const VulkanQueue& queue, const std::vector<std::pair<uint32_t, VkSemaphoreWaitFlags>>& waitSemaphoreData, const std::vector<uint32_t>& signalSemaphores, const uint32_t fence = UINT32_MAX) const;
 	void reset() const;
 
-	void cmdBeginRenderPass(const VulkanRenderPass& renderPass, VkFramebuffer frameBuffer, VkExtent2D extent, const std::vector<VkClearValue>& clearValues) const;
+	void cmdBeginRenderPass(uint32_t renderPass, uint32_t frameBuffer, VkExtent2D extent, const std::vector<VkClearValue>& clearValues) const;
 	void cmdEndRenderPass() const;
-	void cmdBindPipeline(VkPipelineBindPoint bindPoint, VkPipeline pipeline);
-	void cmdNextSubpass();
+	void cmdBindPipeline(VkPipelineBindPoint bindPoint, uint32_t pipeline) const;
+	void cmdNextSubpass() const;
 	void cmdPipelineBarrier(VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, VkDependencyFlags dependencyFlags, 
 		const std::vector<VkMemoryBarrier>& memoryBarriers, 
 		const std::vector<VkBufferMemoryBarrier>& bufferMemoryBarriers, 
-		const std::vector<VkImageMemoryBarrier>& imageMemoryBarriers);
+		const std::vector<VkImageMemoryBarrier>& imageMemoryBarriers) const;
 
-	void cmdBindVertexBuffer(const VulkanBuffer& buffer, VkDeviceSize offset);
-	void cmdBindVertexBuffers(const std::vector<VulkanBuffer>& buffers, const std::vector<VkDeviceSize>& offsets);
-	void cmdBindIndexBuffer(const VulkanBuffer& buffer, VkDeviceSize offset, VkIndexType indexType);
+	void cmdBindVertexBuffer(uint32_t buffer, VkDeviceSize offset) const;
+	void cmdBindVertexBuffers(const std::vector<uint32_t>& bufferIDs, const std::vector<VkDeviceSize>& offsets) const;
+	void cmdBindIndexBuffer(uint32_t bufferID, VkDeviceSize offset, VkIndexType indexType) const;
 
-	void cmdCopyBuffer(const VulkanBuffer& source, const VulkanBuffer& destination, const std::vector<VkBufferCopy>& copyRegions);
-	void cmdPushConstant(VkPipelineLayout layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void* pValues);
+	void cmdCopyBuffer(uint32_t source, uint32_t destination, const std::vector<VkBufferCopy>& copyRegions) const;
+	void cmdPushConstant(uint32_t layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void* pValues) const;
 
-	void cmdSetViewport(const VkViewport& viewport);
-	void cmdSetScissor(VkRect2D scissor);
+	void cmdSetViewport(const VkViewport& viewport) const;
+	void cmdSetScissor(VkRect2D scissor) const;
 
-	void cmdDraw(uint32_t vertexCount, uint32_t firstVertex);
-	void cmdDrawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_t vertexOffset);
-
-
-	[[nodiscard]] uint32_t getID() const;
+	void cmdDraw(uint32_t vertexCount, uint32_t firstVertex) const;
+	void cmdDrawIndexed(uint32_t indexCount, uint32_t firstIndex, int32_t vertexOffset) const;
 
 private:
-	VulkanCommandBuffer() = default;
-	VulkanCommandBuffer(VulkanDevice& device, VkCommandBuffer commandBuffer, bool isSecondary, uint32_t familyIndex, uint32_t threadID);
+	VulkanCommandBuffer(uint32_t device, VkCommandBuffer commandBuffer, bool isSecondary, uint32_t familyIndex, uint32_t threadID);
 
 	VkCommandBuffer m_vkHandle = VK_NULL_HANDLE;
-	uint32_t m_id = 0;
 
 	bool m_isRecording = false;
 	bool m_isSecondary = false;
 	uint32_t m_familyIndex = 0;
 	uint32_t m_threadID = 0;
 
-	VulkanDevice* m_device;
-
-	inline static uint32_t s_idCounter = 0;
+	uint32_t m_device;
 
 	friend class VulkanDevice;
 };

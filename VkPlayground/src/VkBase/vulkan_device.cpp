@@ -5,16 +5,12 @@
 #include <stdexcept>
 
 #include "logger.hpp"
-#include "vulkan_buffer.hpp"
-#include "vulkan_queues.hpp"
-#include "vulkan_command_buffer.hpp"
-#include "vulkan_pipeline.hpp"
 
 VulkanQueue VulkanDevice::getQueue(const QueueSelection& queueSelection) const
 {
-	VulkanQueue queue;
-	vkGetDeviceQueue(m_vkHandle, queueSelection.familyIndex, queueSelection.queueIndex, &queue.m_vkHandle);
-	return queue;
+	VkQueue queue;
+	vkGetDeviceQueue(m_vkHandle, queueSelection.familyIndex, queueSelection.queueIndex, &queue);
+	return VulkanQueue(queue);
 }
 
 VulkanGPU VulkanDevice::getGPU() const
@@ -27,7 +23,7 @@ const VulkanMemoryAllocator& VulkanDevice::getMemoryAllocator() const
 	return m_memoryAllocator;
 }
 
-VkSemaphore VulkanDevice::getStagingBufferSemaphore() const
+uint32_t VulkanDevice::getStagingBufferSemaphore() const
 {
 	return m_stagingSemaphore;
 }
@@ -119,7 +115,7 @@ uint32_t VulkanDevice::createCommandBuffer(const QueueFamily& family, const uint
 		m_commandBuffers[threadID] = {};
 	}
 
-	m_commandBuffers[threadID].push_back({*this, commandBuffer, isSecondary, family.index, threadID});
+	m_commandBuffers[threadID].push_back({m_id, commandBuffer, isSecondary, family.index, threadID});
 	return m_commandBuffers[threadID].back().getID();
 }
 
@@ -145,7 +141,7 @@ uint32_t VulkanDevice::createOneTimeCommandBuffer(uint32_t threadID)
 		m_commandBuffers[threadID] = {};
 	}
 
-	m_commandBuffers[threadID].push_back({*this, commandBuffer, false, m_oneTimeQueue.familyIndex, threadID});
+	m_commandBuffers[threadID].push_back({m_id, commandBuffer, false, m_oneTimeQueue.familyIndex, threadID});
 	return m_commandBuffers[threadID].back().getID();
 }
 
@@ -185,7 +181,7 @@ void VulkanDevice::freeCommandBuffer(const uint32_t id, const uint32_t threadID)
 	}
 }
 
-VkFramebuffer VulkanDevice::createFramebuffer(const VkExtent3D size, const VulkanRenderPass& renderPass, const std::vector<VkImageView>& attachments)
+uint32_t VulkanDevice::createFramebuffer(const VkExtent3D size, const VulkanRenderPass& renderPass, const std::vector<VkImageView>& attachments)
 {
 	VkFramebufferCreateInfo framebufferInfo{};
 	framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -202,21 +198,58 @@ VkFramebuffer VulkanDevice::createFramebuffer(const VkExtent3D size, const Vulka
 		throw std::runtime_error("Failed to create framebuffer");
 	}
 
-	m_framebuffers.push_back(framebuffer);
-	return m_framebuffers.back();
+	m_framebuffers.push_back({m_id, framebuffer});
+	return m_framebuffers.back().getID();
 }
 
-void VulkanDevice::freeFramebuffer(const VkFramebuffer framebuffer)
+VulkanFramebuffer& VulkanDevice::getFramebuffer(const uint32_t id)
 {
-	Logger::print("Freeing framebuffer with handle " + std::to_string(reinterpret_cast<uint64_t>(framebuffer)));
-	vkDestroyFramebuffer(m_vkHandle, framebuffer, nullptr);
-	std::erase(m_framebuffers, framebuffer);
+	for (auto& framebuffer : m_framebuffers)
+	{
+		if (framebuffer.getID() == id)
+		{
+			return framebuffer;
+		}
+	}
+
+	throw std::runtime_error("Framebuffer not found");
+}
+
+void VulkanDevice::freeFramebuffer(const uint32_t id)
+{
+	for (auto it = m_framebuffers.begin(); it != m_framebuffers.end(); ++it)
+	{
+		if (it->getID() == id)
+		{
+			it->free();
+			m_framebuffers.erase(it);
+			break;
+		}
+	}
+}
+
+void VulkanDevice::freeFramebuffer(const VulkanFramebuffer& framebuffer)
+{
+	freeFramebuffer(framebuffer.getID());
 }
 
 uint32_t VulkanDevice::createBuffer(const VkDeviceSize size, const VkBufferUsageFlags usage)
 {
-	const VulkanBuffer buffer = _createBuffer(size, usage);
-	m_buffers.push_back(buffer);
+	
+	VkBufferCreateInfo bufferInfo{};
+	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferInfo.size = size;
+	bufferInfo.usage = usage;
+	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	bufferInfo.flags = 0;
+
+	VkBuffer buffer;
+	if (vkCreateBuffer(m_vkHandle, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
+	{
+		throw std::runtime_error("Failed to create buffer");
+	}
+
+	m_buffers.push_back({m_id, buffer, size});
 
 	Logger::print("Created buffer with id " + std::to_string(m_buffers.back().getID()) + " and size " + std::to_string(m_buffers.back().getSize()));
 	return m_buffers.back().getID();
@@ -276,7 +309,7 @@ uint32_t VulkanDevice::createImage(const VkImageType type, const VkFormat format
 		throw std::runtime_error("Failed to create image");
 	}
 
-	m_images.push_back({*this, image, extent, type, VK_IMAGE_LAYOUT_UNDEFINED});
+	m_images.push_back({m_id, image, extent, type, VK_IMAGE_LAYOUT_UNDEFINED});
 	Logger::print("Created image with id " + std::to_string(m_images.back().getID()));
 	return m_images.back().getID();
 }
@@ -314,52 +347,54 @@ void VulkanDevice::freeImage(const VulkanImage& image)
 
 void VulkanDevice::configureStagingBuffer(const VkDeviceSize size, const QueueSelection& queue, const bool forceAllowStagingMemory)
 {
-	if (m_stagingBufferInfo.stagingBuffer.m_vkHandle != VK_NULL_HANDLE)
+	if (m_stagingBufferInfo.stagingBuffer != UINT32_MAX)
 	{
 		throw std::runtime_error("Staging buffer already configured! Reconfiguration is not implemented yet TvT");
 	}
 
-	m_stagingBufferInfo.stagingBuffer = _createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+	m_stagingBufferInfo.stagingBuffer = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 
 	m_stagingBufferInfo.queue = queue;
 
-	const VkMemoryRequirements memRequirements = m_stagingBufferInfo.stagingBuffer.getMemoryRequirements();
+	VulkanBuffer& stagingBuffer = getBuffer(m_stagingBufferInfo.stagingBuffer);
+	const VkMemoryRequirements memRequirements = stagingBuffer.getMemoryRequirements();
 	const std::optional<uint32_t> memoryType = m_memoryAllocator.getMemoryStructure().getStagingMemoryType(memRequirements.memoryTypeBits);
 	if (memoryType.has_value() && !m_memoryAllocator.isMemoryTypeHidden(memoryType.value()))
 	{
-		m_stagingBufferInfo.stagingBuffer.allocateFromIndex(memoryType.value());
+		stagingBuffer.allocateFromIndex(memoryType.value());
 		if (!forceAllowStagingMemory)
 			m_memoryAllocator.hideMemoryType(memoryType.value());
 	}
 	else
 	{
-		m_stagingBufferInfo.stagingBuffer.allocateFromFlags({VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true});
+		stagingBuffer.allocateFromFlags({VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT, true});
 	}
 }
 
 void* VulkanDevice::mapStagingBuffer(const VkDeviceSize size, const VkDeviceSize offset)
 {
-	return m_stagingBufferInfo.stagingBuffer.map(size, offset);
+	return getBuffer(m_stagingBufferInfo.stagingBuffer).map(size, offset);
 }
 
 void VulkanDevice::unmapStagingBuffer()
 {
-	m_stagingBufferInfo.stagingBuffer.unmap();
+	getBuffer(m_stagingBufferInfo.stagingBuffer).unmap();
 }
 
-void VulkanDevice::dumpStagingBuffer(VulkanBuffer& buffer, const VkDeviceSize size, const VkDeviceSize offset, const uint32_t threadID)
+void VulkanDevice::dumpStagingBuffer(const uint32_t buffer, const VkDeviceSize size, const VkDeviceSize offset, const uint32_t threadID)
 {
 	dumpStagingBuffer(buffer, {{offset, 0, size}}, threadID);
 }
 
-void VulkanDevice::dumpStagingBuffer(VulkanBuffer& buffer, const std::vector<VkBufferCopy>& regions, const uint32_t threadID)
+void VulkanDevice::dumpStagingBuffer(const uint32_t buffer, const std::vector<VkBufferCopy>& regions, const uint32_t threadID)
 {
-	if (m_stagingBufferInfo.stagingBuffer.m_vkHandle == VK_NULL_HANDLE)
+	VulkanBuffer& stagingBuffer = getBuffer(m_stagingBufferInfo.stagingBuffer);
+	if (stagingBuffer.m_vkHandle == VK_NULL_HANDLE)
 		throw std::runtime_error("Staging buffer not configured");
 
-	if (m_stagingBufferInfo.stagingBuffer.isMemoryMapped())
+	if (stagingBuffer.isMemoryMapped())
 	{
-		m_stagingBufferInfo.stagingBuffer.unmap();
+		stagingBuffer.unmap();
 	}
 
 	const QueueFamily transferQueueFamily = m_physicalDevice.getQueueFamilies().getQueueFamily(m_stagingBufferInfo.queue.familyIndex);
@@ -369,7 +404,7 @@ void VulkanDevice::dumpStagingBuffer(VulkanBuffer& buffer, const std::vector<VkB
 	commandBuffer.cmdCopyBuffer(m_stagingBufferInfo.stagingBuffer, buffer, regions);
 	commandBuffer.endRecording();
 	const VulkanQueue queue = getQueue(m_stagingBufferInfo.queue);
-	commandBuffer.submit(queue, {}, {m_stagingSemaphore}, nullptr);
+	commandBuffer.submit(queue, {}, {m_stagingSemaphore});
 	
 	queue.waitIdle();
 	freeCommandBuffer(commandBuffer, threadID);
@@ -421,7 +456,7 @@ uint32_t VulkanDevice::createRenderPass(const VulkanRenderPassBuilder& builder, 
 	}
 
 	
-	m_renderPasses.push_back({this, renderPass});
+	m_renderPasses.push_back({m_id, renderPass});
 	Logger::print("Created renderpass with id " + std::to_string(m_renderPasses.back().getID()) + ", " + std::to_string(builder.m_attachments.size()) + " attachment(s) and " + std::to_string(builder.m_subpasses.size()) + " subpass(es)");
 	
 	return m_renderPasses.back().getID();
@@ -457,30 +492,7 @@ void VulkanDevice::freeRenderPass(const VulkanRenderPass& renderPass)
 	freeRenderPass(renderPass.m_id);
 }
 
-VkDescriptorSetLayout VulkanDevice::createDescriptorSetLayout(const std::vector<VkDescriptorSetLayoutBinding>& bindings)
-{
-	VkDescriptorSetLayoutCreateInfo layoutInfo{};
-	layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-	layoutInfo.pBindings = bindings.data();
-
-	VkDescriptorSetLayout layout;
-	if (vkCreateDescriptorSetLayout(m_vkHandle, &layoutInfo, nullptr, &layout) != VK_SUCCESS)
-	{
-		throw std::runtime_error("Failed to create descriptor set layout");
-	}
-
-	m_descriptorSetLayouts.push_back(layout);
-	return layout;
-}
-
-void VulkanDevice::freeDescriptorSetLayout(const VkDescriptorSetLayout layout)
-{
-	vkDestroyDescriptorSetLayout(m_vkHandle, layout, nullptr);
-	std::erase(m_descriptorSetLayouts, layout);
-}
-
-VkPipelineLayout VulkanDevice::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<VkPushConstantRange>& pushConstantRanges)
+uint32_t VulkanDevice::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, const std::vector<VkPushConstantRange>& pushConstantRanges)
 {
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 	pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -495,14 +507,98 @@ VkPipelineLayout VulkanDevice::createPipelineLayout(const std::vector<VkDescript
 		throw std::runtime_error("Failed to create pipeline layout");
 	}
 
-	m_pipelineLayouts.push_back(layout);
-	return layout;
+	m_pipelineLayouts.push_back({m_id, layout});
+	return m_pipelineLayouts.back().getID();
 }
 
-void VulkanDevice::freePipelineLayout(const VkPipelineLayout layout)
+VulkanPipelineLayout& VulkanDevice::getPipelineLayout(const uint32_t id)
 {
-	vkDestroyPipelineLayout(m_vkHandle, layout, nullptr);
-	std::erase(m_pipelineLayouts, layout);
+	for (VulkanPipelineLayout& layout : m_pipelineLayouts)
+	{
+		if (layout.m_id == id)
+		{
+			return layout;
+		}
+	}
+	throw std::runtime_error("Pipeline layout not found");
+}
+
+void VulkanDevice::freePipelineLayout(const uint32_t id)
+{
+	for (auto it = m_pipelineLayouts.begin(); it != m_pipelineLayouts.end(); ++it)
+	{
+		if (it->m_id == id)
+		{
+			it->free();
+			m_pipelineLayouts.erase(it);
+			break;
+		}
+	}
+}
+
+void VulkanDevice::freePipelineLayout(const VulkanPipelineLayout& layout)
+{
+	freePipelineLayout(layout.m_id);
+}
+
+VulkanPipeline& VulkanDevice::getPipeline(const uint32_t id)
+{
+	for (VulkanPipeline& pipeline : m_pipelines)
+	{
+		if (pipeline.m_id == id)
+		{
+			return pipeline;
+		}
+	}
+	throw std::runtime_error("Pipeline not found");
+}
+
+void VulkanDevice::freePipeline(const uint32_t id)
+{
+	for (auto it = m_pipelines.begin(); it != m_pipelines.end(); ++it)
+	{
+		if (it->m_id == id)
+		{
+			it->free();
+			m_pipelines.erase(it);
+			break;
+		}
+	}
+}
+
+void VulkanDevice::freePipeline(const VulkanPipeline& pipeline)
+{
+	freePipeline(pipeline.m_id);
+}
+
+VulkanSemaphore& VulkanDevice::getSemaphore(const uint32_t id)
+{
+	for (VulkanSemaphore& semaphore : m_semaphores)
+	{
+		if (semaphore.m_id == id)
+		{
+			return semaphore;
+		}
+	}
+	throw std::runtime_error("Semaphore not found");
+}
+
+void VulkanDevice::freeSemaphore(uint32_t id)
+{
+	for (auto it = m_semaphores.begin(); it != m_semaphores.end(); ++it)
+	{
+		if (it->m_id == id)
+		{
+			it->free();
+			m_semaphores.erase(it);
+			break;
+		}
+	}
+}
+
+void VulkanDevice::freeSemaphore(VulkanSemaphore& semaphore)
+{
+	freeSemaphore(semaphore.m_id);
 }
 
 uint32_t VulkanDevice::createShader(const std::string& filename, const VkShaderStageFlagBits stage)
@@ -525,7 +621,7 @@ uint32_t VulkanDevice::createShader(const std::string& filename, const VkShaderS
 		throw std::runtime_error("failed to create shader module!");
 	}
 
-	m_shaders.push_back(VulkanShader(shader, stage));
+	m_shaders.push_back({m_id, shader, stage});
 	return m_shaders.back().getID();
 }
 
@@ -567,13 +663,7 @@ void VulkanDevice::freeAllShaders()
 	m_shaders.clear();
 }
 
-void VulkanDevice::freePipeline(const VkPipeline pipeline)
-{
-	vkDestroyPipeline(m_vkHandle, pipeline, nullptr);
-	std::erase(m_pipelines, pipeline);
-}
-
-VkSemaphore VulkanDevice::createSemaphore()
+uint32_t VulkanDevice::createSemaphore()
 {
 	VkSemaphoreCreateInfo semaphoreInfo{};
 	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -584,14 +674,8 @@ VkSemaphore VulkanDevice::createSemaphore()
 		throw std::runtime_error("Failed to create semaphore");
 	}
 
-	m_semaphores.push_back(semaphore);
-	return semaphore;
-}
-
-void VulkanDevice::freeSemaphore(const VkSemaphore semaphore)
-{
-	vkDestroySemaphore(m_vkHandle, semaphore, nullptr);
-	std::erase(m_semaphores, semaphore);
+	m_semaphores.push_back({m_id, semaphore});
+	return m_semaphores.back().getID();
 }
 
 uint32_t VulkanDevice::createFence(const bool signaled)
@@ -606,7 +690,7 @@ uint32_t VulkanDevice::createFence(const bool signaled)
 		throw std::runtime_error("Failed to create fence");
 	}
 
-	m_fences.push_back({*this, fence, signaled});
+	m_fences.push_back({m_id, fence, signaled});
 	return m_fences.back().getID();
 }
 
@@ -640,12 +724,12 @@ void VulkanDevice::freeFence(const VulkanFence& fence)
 	freeFence(fence.m_id);
 }
 
-void VulkanDevice::waitIdle()
+void VulkanDevice::waitIdle() const
 {
 	vkDeviceWaitIdle(m_vkHandle);
 }
 
-VkPipeline VulkanDevice::createPipeline(const VulkanPipelineBuilder& builder, const VkPipelineLayout pipelineLayout, const uint32_t renderPass, const uint32_t subpass)
+uint32_t VulkanDevice::createPipeline(const VulkanPipelineBuilder& builder, const uint32_t pipelineLayout, const uint32_t renderPass, const uint32_t subpass)
 {
 	const std::vector<VkPipelineShaderStageCreateInfo> shaderModules = builder.createShaderStages();
 
@@ -661,7 +745,7 @@ VkPipeline VulkanDevice::createPipeline(const VulkanPipelineBuilder& builder, co
     pipelineInfo.pDepthStencilState = &builder.m_depthStencilState;
     pipelineInfo.pColorBlendState = &builder.m_colorBlendState;
     pipelineInfo.pDynamicState = &builder.m_dynamicState;
-    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.layout = getPipelineLayout(pipelineLayout).m_vkHandle;
     pipelineInfo.renderPass = getRenderPass(renderPass).m_vkHandle;
     pipelineInfo.subpass = subpass;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -673,8 +757,8 @@ VkPipeline VulkanDevice::createPipeline(const VulkanPipelineBuilder& builder, co
 	}
 	Logger::print("Created pipeline with handle " + std::to_string(reinterpret_cast<uint64_t>(pipeline)));
 
-	m_pipelines.push_back(pipeline);
-	return m_pipelines.back();
+	m_pipelines.push_back({*this, pipeline, pipelineLayout, renderPass, subpass});
+	return m_pipelines.back().getID();
 }
 
 void VulkanDevice::free()
@@ -697,12 +781,11 @@ void VulkanDevice::free()
 
 	m_threadCommandInfos.clear();
 
-	if (m_stagingBufferInfo.stagingBuffer.m_vkHandle != VK_NULL_HANDLE)
-		m_stagingBufferInfo.stagingBuffer.free();
-
 	for (VulkanBuffer& buffer : m_buffers)
 		buffer.free();
 	m_buffers.clear();
+
+	m_stagingBufferInfo = {};
 
 	for (VulkanImage& image : m_images)
 		image.free();
@@ -712,29 +795,30 @@ void VulkanDevice::free()
 
 	for (VulkanRenderPass& renderPass : m_renderPasses)
 		renderPass.free();
+	m_renderPasses.clear();
 
-	for (const VkDescriptorSetLayout layout : m_descriptorSetLayouts)
-		vkDestroyDescriptorSetLayout(m_vkHandle, layout, nullptr);
-	m_descriptorSetLayouts.clear();
+	//for (const VkDescriptorSetLayout layout : m_descriptorSetLayouts)
+	//	vkDestroyDescriptorSetLayout(m_vkHandle, layout, nullptr);
+	//m_descriptorSetLayouts.clear();
 
-	for (const VkPipelineLayout layout : m_pipelineLayouts)
-		vkDestroyPipelineLayout(m_vkHandle, layout, nullptr);
+	for (VulkanPipelineLayout& pipelineLayout : m_pipelineLayouts)
+		pipelineLayout.free();
 	m_pipelineLayouts.clear();
 
-	for (const VulkanShader& shader : m_shaders)
-		vkDestroyShaderModule(m_vkHandle, shader.m_vkHandle, nullptr);
+	for (VulkanShader& shader : m_shaders)
+		shader.free();
 	m_shaders.clear();
 
-	for (const VkPipeline pipeline : m_pipelines)
-		vkDestroyPipeline(m_vkHandle, pipeline, nullptr);
+	for (VulkanPipeline& pipeline : m_pipelines)
+		pipeline.free();
 	m_pipelines.clear();
 
-	for (const VkSemaphore semaphore : m_semaphores)
-		vkDestroySemaphore(m_vkHandle, semaphore, nullptr);
+	for (VulkanSemaphore& semaphore : m_semaphores)
+		semaphore.free();
 	m_semaphores.clear();
 
-	for (const VkFramebuffer framebuffer : m_framebuffers)
-		vkDestroyFramebuffer(m_vkHandle, framebuffer, nullptr);
+	for (VulkanFramebuffer& framebuffer : m_framebuffers)
+		framebuffer.free();
 	m_framebuffers.clear();
 
 	for (VulkanFence& fence : m_fences)
@@ -742,37 +826,20 @@ void VulkanDevice::free()
 	m_fences.clear();
 
 	vkDestroyDevice(m_vkHandle, nullptr);
+	m_vkHandle = VK_NULL_HANDLE;
 }
 
 VkDeviceMemory VulkanDevice::getMemoryHandle(const uint32_t chunkID) const
 {
 	for (const auto& chunk : m_memoryAllocator.m_memoryChunks)
 	{
-		if (chunk.m_chunkID == chunkID)
+		if (chunk.getID() == chunkID)
 		{
 			return chunk.m_memory;
 		}
 	}
 
 	throw std::runtime_error("Memory chunk not found");
-}
-
-VulkanBuffer VulkanDevice::_createBuffer(const VkDeviceSize size, const VkBufferUsageFlags usage)
-{
-	VkBufferCreateInfo bufferInfo{};
-	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferInfo.size = size;
-	bufferInfo.usage = usage;
-	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	bufferInfo.flags = 0;
-
-	VkBuffer buffer;
-	if (vkCreateBuffer(m_vkHandle, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
-	{
-		throw std::runtime_error("Failed to create buffer");
-	}
-
-	return VulkanBuffer(*this, buffer, size);
 }
 
 VulkanDevice::VulkanDevice(const VulkanGPU pDevice, const VkDevice device)

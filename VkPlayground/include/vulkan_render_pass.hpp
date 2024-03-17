@@ -2,6 +2,8 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "vulkan_base.hpp"
+
 class VulkanDevice;
 
 enum AttachmentType
@@ -50,21 +52,17 @@ private:
 	friend class VulkanDevice;
 };
 
-class VulkanRenderPass
+class VulkanRenderPass : public VulkanBase
 {
-	[[nodiscard]] uint32_t getID() const;
+public:
 
 private:
 	void free();
-	VulkanRenderPass() = default;
-	VulkanRenderPass(VulkanDevice* device, VkRenderPass renderPass);
+
+	VulkanRenderPass(uint32_t device, VkRenderPass renderPass);
 
 	VkRenderPass m_vkHandle = VK_NULL_HANDLE;
-	VulkanDevice* m_device = nullptr;
-
-	uint32_t m_id = 0;
-
-	inline static uint32_t s_idCounter = 0;
+	uint32_t m_device;
 
 	friend class VulkanDevice;
 	friend class VulkanCommandBuffer;

@@ -88,6 +88,11 @@ void VulkanQueue::waitIdle() const
 	vkQueueWaitIdle(m_vkHandle);
 }
 
+VulkanQueue::VulkanQueue(const VkQueue queue)
+	: m_vkHandle(queue)
+{
+}
+
 QueueFamilySelector::QueueFamilySelector(const GPUQueueStructure& structure)
 {
 	this->m_structure = structure;

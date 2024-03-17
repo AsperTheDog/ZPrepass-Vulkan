@@ -7,25 +7,25 @@
 
 class VulkanGPU;
 
-class VulkanContext
+class VulkanContext : public VulkanBase
 {
 public:
-	VulkanContext() = default;
-	VulkanContext(uint32_t vulkanApiVersion, bool enableValidationLayers, const std::vector<const char*>& extensions);
+	static void init(uint32_t vulkanApiVersion, bool enableValidationLayers, const std::vector<const char*>& extensions);
 
-	[[nodiscard]] std::vector<VulkanGPU> getGPUs() const;
-	[[nodiscard]] VulkanDevice& getDevice();
-	[[nodiscard]] const VulkanDevice& getDevice() const;
+	static [[nodiscard]] std::vector<VulkanGPU> getGPUs();
 
-	VulkanDevice& createDevice(VulkanGPU gpu, const QueueFamilySelector& queues, const std::vector<const char*>& extensions, const VkPhysicalDeviceFeatures& features);
+	static uint32_t createDevice(VulkanGPU gpu, const QueueFamilySelector& queues, const std::vector<const char*>& extensions, const VkPhysicalDeviceFeatures& features);
+	static VulkanDevice& getDevice(uint32_t index);
+	static void freeDevice(uint32_t index);
+	static void freeDevice(const VulkanDevice& device);
 
-	void free();
+	static void free();
 
 private:
-	VkInstance m_vkHandle = VK_NULL_HANDLE;
-	bool m_validationLayersEnabled = false;
+	inline static VkInstance m_vkHandle = VK_NULL_HANDLE;
+	inline static bool m_validationLayersEnabled = false;
 
-	VulkanDevice m_device{};
+	inline static std::vector<VulkanDevice> m_devices{};
 
 	friend class SDLWindow;
 };

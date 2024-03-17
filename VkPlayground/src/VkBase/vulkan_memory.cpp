@@ -7,13 +7,14 @@
 #include <vulkan/vulkan_core.h>
 
 #include "logger.hpp"
+#include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
 
 std::string compactBytes(const VkDeviceSize bytes)
 {
 	const char* units[] = { "B", "KB", "MB", "GB", "TB" };
 	uint32_t unit = 0;
-	float exact = bytes;
+	float exact = static_cast<float>(bytes);
 	while (exact > 1024)
 	{
 		exact /= 1024;
@@ -86,7 +87,7 @@ uint32_t MemoryChunk::getMemoryType() const
 
 bool MemoryChunk::isEmpty() const
 {
-	uint32_t freeSize = 0;
+	VkDeviceSize freeSize = 0;
 	for (const auto& size : m_unallocatedData | std::views::values)
 	{
 		freeSize += size;
@@ -99,7 +100,7 @@ MemoryChunk::MemoryBlock MemoryChunk::allocate(const VkDeviceSize newSize, const
 	VkDeviceSize best = m_size;
 	VkDeviceSize bestAlignOffset = 0;
 	if (newSize > m_unallocatedData[m_biggestChunk])
-		return {0, 0, m_chunkID};
+		return {0, 0, m_id};
 
 	for (const auto& [offset, size] : m_unallocatedData)
 	{
@@ -118,7 +119,7 @@ MemoryChunk::MemoryBlock MemoryChunk::allocate(const VkDeviceSize newSize, const
 	}
 
 	if (best == m_size)
-		return {0, 0, m_chunkID};
+		return {0, 0, m_id};
 
 	const VkDeviceSize bestSize = m_unallocatedData[best];
 	m_unallocatedData.erase(best);
@@ -145,12 +146,12 @@ MemoryChunk::MemoryBlock MemoryChunk::allocate(const VkDeviceSize newSize, const
 
 	m_unallocatedSize -= newSize;
 
-	return {newSize, best, m_chunkID};
+	return {newSize, best, m_id};
 }
 
 void MemoryChunk::deallocate(const MemoryBlock& block)
 {
-	if (block.chunk != m_chunkID)
+	if (block.chunk != m_id)
 		throw std::runtime_error("Block does not belong to this chunk!");
 
 	m_unallocatedData[block.offset] = block.size;
@@ -172,7 +173,7 @@ VkDeviceSize MemoryChunk::getRemainingSize() const
 }
 
 MemoryChunk::MemoryChunk(const VkDeviceSize size, const uint32_t memoryType, const VkDeviceMemory vkHandle)
-	: m_chunkID(m_chunkCount++), m_size(size), m_memoryType(memoryType), m_memory(vkHandle), m_unallocatedSize(size)
+	: m_size(size), m_memoryType(memoryType), m_memory(vkHandle), m_unallocatedSize(size)
 {
 	m_unallocatedData[0] = size;
 }
@@ -181,11 +182,11 @@ void MemoryChunk::defragment()
 {
 	if (m_unallocatedSize == m_size)
 	{
-		Logger::print("No need to defragment empty memory chunk " + std::to_string(m_chunkID));
+		Logger::print("No need to defragment empty memory chunk " + std::to_string(m_id));
 		return;
 	}
 	Logger::pushContext("Memory defragmentation");
-	Logger::print("Defragmenting memory chunk " + std::to_string(m_chunkID));
+	Logger::print("Defragmenting memory chunk " + std::to_string(m_id));
 	uint32_t mergeCount = 0;
 	for (auto it = m_unallocatedData.begin(); it != m_unallocatedData.end();)
 	{
@@ -217,7 +218,7 @@ void MemoryChunk::defragment()
 }
 
 VulkanMemoryAllocator::VulkanMemoryAllocator(const VulkanDevice& device, const VkDeviceSize defaultChunkSize)
-	: m_memoryStructure(device.m_physicalDevice), m_chunkSize(defaultChunkSize), m_device(device.m_vkHandle)
+	: m_memoryStructure(device.getGPU()), m_chunkSize(defaultChunkSize), m_device(device.getID())
 {
 
 }
@@ -226,7 +227,7 @@ void VulkanMemoryAllocator::free()
 {
 	for (const MemoryChunk& memoryBlock : m_memoryChunks)
 	{
-		vkFreeMemory(m_device, memoryBlock.m_memory, nullptr);
+		vkFreeMemory(VulkanContext::getDevice(m_device).m_vkHandle, memoryBlock.m_memory, nullptr);
 	}
 	m_memoryChunks.clear();
 }
@@ -257,13 +258,13 @@ MemoryChunk::MemoryBlock VulkanMemoryAllocator::allocate(const VkDeviceSize size
 	allocInfo.memoryTypeIndex = memoryType;
 
 	VkDeviceMemory memory;
-	if (vkAllocateMemory(m_device, &allocInfo, nullptr, &memory) != VK_SUCCESS)
+	if (vkAllocateMemory(VulkanContext::getDevice(m_device).m_vkHandle, &allocInfo, nullptr, &memory) != VK_SUCCESS)
 	{
 		throw std::runtime_error("Failed to allocate memory");
 	}
 
 	m_memoryChunks.push_back(MemoryChunk(chunkSize, memoryType, memory));
-	Logger::print("Allocated chunk of size " + compactBytes(chunkSize) + " of memory type " + std::to_string(memoryType) + " (ID: " + std::to_string(m_memoryChunks.back().m_chunkID) + ")");
+	Logger::print("Allocated chunk of size " + compactBytes(chunkSize) + " of memory type " + std::to_string(memoryType) + " (ID: " + std::to_string(m_memoryChunks.back().getID()) + ")");
 	return m_memoryChunks.back().allocate(size, alignment);
 }
 
@@ -301,10 +302,10 @@ MemoryChunk::MemoryBlock VulkanMemoryAllocator::searchAndAllocate(const VkDevice
 
 void VulkanMemoryAllocator::deallocate(const MemoryChunk::MemoryBlock& block)
 {
-	uint32_t chunkIndex = m_memoryChunks.size();
+	uint32_t chunkIndex = static_cast<uint32_t>(m_memoryChunks.size());
 	for (uint32_t i = 0; i < m_memoryChunks.size(); i++)
 	{
-		if (m_memoryChunks[i].m_chunkID == block.chunk)
+		if (m_memoryChunks[i].getID() == block.chunk)
 		{
 			chunkIndex = i;
 			break;
@@ -319,7 +320,7 @@ void VulkanMemoryAllocator::deallocate(const MemoryChunk::MemoryBlock& block)
 	m_memoryChunks[chunkIndex].deallocate(block);
 	if (m_memoryChunks[chunkIndex].isEmpty())
 	{
-		vkFreeMemory(m_device, m_memoryChunks[chunkIndex].m_memory, nullptr);
+		vkFreeMemory(VulkanContext::getDevice(m_device).m_vkHandle, m_memoryChunks[chunkIndex].m_memory, nullptr);
 		m_memoryChunks.erase(m_memoryChunks.begin() + chunkIndex);
 		Logger::print("Freed empty chunk " + std::to_string(block.chunk));
 	}

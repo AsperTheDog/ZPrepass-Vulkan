@@ -1,15 +1,16 @@
 #include "vulkan_image.hpp"
 
-#include <iostream>
 #include <stdexcept>
 
 #include "logger.hpp"
+#include "vulkan_command_buffer.hpp"
+#include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
 
 VkMemoryRequirements VulkanImage::getMemoryRequirements() const
 {
 	VkMemoryRequirements requirements;
-	vkGetImageMemoryRequirements(m_device->m_vkHandle, m_vkHandle, &requirements);
+	vkGetImageMemoryRequirements(VulkanContext::getDevice(m_device).m_vkHandle, m_vkHandle, &requirements);
 	return requirements;
 }
 
@@ -17,7 +18,7 @@ void VulkanImage::allocateFromIndex(const uint32_t memoryIndex)
 {
 	Logger::pushContext("Image memory");
 	const VkMemoryRequirements requirements = getMemoryRequirements();
-	setBoundMemory(m_device->m_memoryAllocator.allocate(requirements.size, requirements.alignment, memoryIndex));
+	setBoundMemory(VulkanContext::getDevice(m_device).m_memoryAllocator.allocate(requirements.size, requirements.alignment, memoryIndex));
 	Logger::popContext();
 }
 
@@ -25,13 +26,8 @@ void VulkanImage::allocateFromFlags(const VulkanMemoryAllocator::MemoryPropertyP
 {
 	Logger::pushContext("Image memory");
 	const VkMemoryRequirements requirements = getMemoryRequirements();
-	setBoundMemory(m_device->m_memoryAllocator.searchAndAllocate(requirements.size, requirements.alignment, memoryProperties, requirements.memoryTypeBits));
+	setBoundMemory(VulkanContext::getDevice(m_device).m_memoryAllocator.searchAndAllocate(requirements.size, requirements.alignment, memoryProperties, requirements.memoryTypeBits));
 	Logger::popContext();
-}
-
-uint32_t VulkanImage::getID() const
-{
-	return m_id;
 }
 
 VkExtent3D VulkanImage::getSize() const
@@ -69,7 +65,7 @@ VkImageView VulkanImage::createImageView(const VkFormat format, const VkImageAsp
 	createInfo.subresourceRange.layerCount = 1;
 
 	VkImageView imageView;
-	if (vkCreateImageView(m_device->m_vkHandle, &createInfo, nullptr, &imageView) != VK_SUCCESS)
+	if (vkCreateImageView(VulkanContext::getDevice(m_device).m_vkHandle, &createInfo, nullptr, &imageView) != VK_SUCCESS)
 	{
 		throw std::runtime_error("Failed to create image view!");
 	}
@@ -80,13 +76,14 @@ VkImageView VulkanImage::createImageView(const VkFormat format, const VkImageAsp
 
 void VulkanImage::freeImageView(const VkImageView imageView)
 {
-	vkDestroyImageView(m_device->m_vkHandle, imageView, nullptr);
+	vkDestroyImageView(VulkanContext::getDevice(m_device).m_vkHandle, imageView, nullptr);
 	std::erase(m_imageViews, imageView);
 }
 
-void VulkanImage::transitionLayout(const VkImageLayout layout, const VkImageAspectFlags aspectFlags, const uint32_t srcQueueFamily, const uint32_t dstQueueFamily, uint32_t threadID)
+void VulkanImage::transitionLayout(const VkImageLayout layout, const VkImageAspectFlags aspectFlags, const uint32_t srcQueueFamily, const uint32_t dstQueueFamily, const uint32_t threadID)
 {
-	VulkanCommandBuffer& commandBuffer = m_device->getCommandBuffer(m_device->createOneTimeCommandBuffer(threadID), threadID);
+	VulkanDevice& device = VulkanContext::getDevice(m_device);
+	VulkanCommandBuffer& commandBuffer = device.getCommandBuffer(device.createOneTimeCommandBuffer(threadID), threadID);
 
 	VkImageMemoryBarrier barrier{};
 	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -123,17 +120,17 @@ void VulkanImage::transitionLayout(const VkImageLayout layout, const VkImageAspe
 	commandBuffer.beginRecording(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 	commandBuffer.cmdPipelineBarrier(sourceStage, destinationStage, 0, {}, {}, { barrier });
 	commandBuffer.endRecording();
-	const VulkanQueue queue = m_device->getQueue(m_device->m_oneTimeQueue);
-	commandBuffer.submit(queue, {}, {}, VK_NULL_HANDLE);
+	const VulkanQueue queue = device.getQueue(device.m_oneTimeQueue);
+	commandBuffer.submit(queue, {}, {});
 
 	m_layout = layout;
 
 	queue.waitIdle();
-	m_device->freeCommandBuffer(commandBuffer, threadID);
+	device.freeCommandBuffer(commandBuffer, threadID);
 }
 
-VulkanImage::VulkanImage(VulkanDevice& device, const VkImage vkHandle, const VkExtent3D size, VkImageType type, VkImageLayout layout)
-	: m_id(s_idCounter++), m_size(size), m_type(type), m_layout(layout), m_vkHandle(vkHandle), m_device(&device)
+VulkanImage::VulkanImage(const uint32_t device, const VkImage vkHandle, const VkExtent3D size, const VkImageType type, const VkImageLayout layout)
+	: m_size(size), m_type(type), m_layout(layout), m_vkHandle(vkHandle), m_device(device)
 {
 
 }
@@ -147,25 +144,27 @@ void VulkanImage::setBoundMemory(const MemoryChunk::MemoryBlock& memoryRegion)
 	m_memoryRegion = memoryRegion;
 
 	Logger::print("Bound memory to image " + std::to_string(m_id) + " with size " + std::to_string(m_memoryRegion.size) + " and offset " + std::to_string(m_memoryRegion.offset));
-	vkBindImageMemory(m_device->m_vkHandle, m_vkHandle, m_device->getMemoryHandle(m_memoryRegion.chunk), m_memoryRegion.offset);
+	vkBindImageMemory(VulkanContext::getDevice(m_device).m_vkHandle, m_vkHandle, VulkanContext::getDevice(m_device).getMemoryHandle(m_memoryRegion.chunk), m_memoryRegion.offset);
 }
 
 void VulkanImage::free()
 {
+	VulkanDevice& device = VulkanContext::getDevice(m_device);
+
 	for (const VkImageView imageView : m_imageViews)
 	{
-		vkDestroyImageView(m_device->m_vkHandle, imageView, nullptr);
+		vkDestroyImageView(device.m_vkHandle, imageView, nullptr);
 	}
 	Logger::print("Freed image " + std::to_string(m_id) + " with " + std::to_string(m_imageViews.size()) + " image views");
 	Logger::pushContext("Image free");
 	m_imageViews.clear();
 
-	vkDestroyImage(m_device->m_vkHandle, m_vkHandle, nullptr);
+	vkDestroyImage(device.m_vkHandle, m_vkHandle, nullptr);
 	m_vkHandle = VK_NULL_HANDLE;
 
 	if (m_memoryRegion.size > 0)
 	{
-		m_device->m_memoryAllocator.deallocate(m_memoryRegion);
+		device.m_memoryAllocator.deallocate(m_memoryRegion);
 		m_memoryRegion = {};
 	}
 	Logger::popContext();

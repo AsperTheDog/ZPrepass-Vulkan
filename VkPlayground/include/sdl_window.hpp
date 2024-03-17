@@ -34,10 +34,10 @@ public:
 
 	void pollEvents();
 
-	void createSurface(VulkanContext& instance);
-	void createSwapchain(VkSurfaceFormatKHR desiredFormat);
+	void createSurface();
+	void createSwapchain(uint32_t deviceID, VkSurfaceFormatKHR desiredFormat);
 
-	[[nodiscard]] uint32_t acquireNextImage(VkSemaphore semaphore = VK_NULL_HANDLE, const VulkanFence* fence = nullptr) const;
+	[[nodiscard]] uint32_t acquireNextImage(uint32_t semaphoreID, const VulkanFence* fence = nullptr) const;
 	[[nodiscard]] bool getAndResetSwapchainRebuildFlag();
 	[[nodiscard]] VkImageView getImageView(uint32_t index) const;
 	[[nodiscard]] uint32_t getImageCount() const;
@@ -46,7 +46,7 @@ public:
 	[[nodiscard]] VkSurfaceKHR getSurface() const;
 
 	void free();
-	void present(const VulkanQueue& queue, uint32_t imageIndex, VkSemaphore waitSemaphore);
+	void present(const VulkanQueue& queue, uint32_t imageIndex, uint32_t waitSemaphore = UINT32_MAX) const;
 
 private:
 	struct Swapchain
@@ -63,12 +63,12 @@ private:
 	VkSurfaceKHR m_surface = nullptr;
 	Swapchain m_swapchain{};
 
-	VulkanContext* m_instance = nullptr;
+	uint32_t m_deviceID = UINT32_MAX;
 
 	void freeSwapchain();
 	void rebuildSwapchain(VkExtent2D newExtent);
 
-	void _createSwapchain(VkExtent2D size, VkSurfaceFormatKHR format);
+	void _createSwapchain(uint32_t deviceID, VkExtent2D size, VkSurfaceFormatKHR format);
 
 	friend class Surface;
 	friend class VulkanGPU;

@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "logger.hpp"
+#include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
 
 VulkanRenderPassBuilder& VulkanRenderPassBuilder::addAttachment(const VkAttachmentDescription& attachment)
@@ -73,20 +74,15 @@ VkAttachmentDescription VulkanRenderPassBuilder::createAttachment(const VkFormat
 	return attachment;
 }
 
-uint32_t VulkanRenderPass::getID() const
-{
-	return m_id;
-}
-
 void VulkanRenderPass::free()
 {
 	Logger::print("Freeing render pass" + std::to_string(m_id));
-	vkDestroyRenderPass(m_device->m_vkHandle, m_vkHandle, nullptr);
+	vkDestroyRenderPass(VulkanContext::getDevice(m_device).m_vkHandle, m_vkHandle, nullptr);
 	m_vkHandle = VK_NULL_HANDLE;
 }
 
-VulkanRenderPass::VulkanRenderPass(VulkanDevice* device, const VkRenderPass renderPass)
-	: m_vkHandle(renderPass), m_device(device), m_id(s_idCounter++)
+VulkanRenderPass::VulkanRenderPass(const uint32_t device, const VkRenderPass renderPass)
+	: m_vkHandle(renderPass), m_device(device)
 {
 
 }

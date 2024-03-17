@@ -2,10 +2,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include "vulkan_memory.hpp"
+#include "vulkan_base.hpp"
 
 class VulkanDevice;
 
-class VulkanBuffer
+class VulkanBuffer : public VulkanBase
 {
 public:
 	[[nodiscard]] VkMemoryRequirements getMemoryRequirements() const;
@@ -18,26 +19,22 @@ public:
 
 	[[nodiscard]] bool isMemoryMapped() const;
 	[[nodiscard]] void* getMappedData() const;
-	[[nodiscard]] uint32_t getID() const;
 	[[nodiscard]] VkDeviceSize getSize() const;
 
 private:
-	VulkanBuffer() = default;
-	VulkanBuffer(VulkanDevice& device, VkBuffer vkHandle, VkDeviceSize size);
-	void setBoundMemory(const MemoryChunk::MemoryBlock& memoryRegion);
 	void free();
 
-	uint32_t m_id = 0;
+	VulkanBuffer(uint32_t device, VkBuffer vkHandle, VkDeviceSize size);
 
-	MemoryChunk::MemoryBlock m_memoryRegion;
-	VulkanDevice* m_device = nullptr;
-	VkDeviceSize m_size = 0;
+	void setBoundMemory(const MemoryChunk::MemoryBlock& memoryRegion);
 
 	VkBuffer m_vkHandle = VK_NULL_HANDLE;
 
+	MemoryChunk::MemoryBlock m_memoryRegion;
+	VkDeviceSize m_size = 0;
 	void* m_mappedData = nullptr;
 
-	inline static uint32_t s_idCounter = 0;
+	uint32_t m_device;
 
 	friend class VulkanDevice;
 	friend class VulkanCommandBuffer;

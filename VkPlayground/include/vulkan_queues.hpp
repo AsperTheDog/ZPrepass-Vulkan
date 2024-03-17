@@ -60,9 +60,9 @@ public:
 	void waitIdle() const;
 
 private:
-	VulkanQueue() = default;
+	explicit VulkanQueue(VkQueue queue);
 
-	VkQueue m_vkHandle = VK_NULL_HANDLE;
+	VkQueue m_vkHandle;
 
 	friend class VulkanDevice;
 	friend class VulkanCommandBuffer;

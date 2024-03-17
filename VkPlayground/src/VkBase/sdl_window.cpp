@@ -7,6 +7,7 @@
 #include "logger.hpp"
 #include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
+#include "vulkan_sync.hpp"
 
 VkExtent2D SDLWindow::WindowSize::toExtent2D() const
 {
@@ -79,18 +80,16 @@ void SDLWindow::pollEvents()
 	}
 }
 
-void SDLWindow::createSurface(VulkanContext& instance)
+void SDLWindow::createSurface()
 {
 	if (m_surface != nullptr) 
 		throw std::runtime_error("Surface already created");
 
-	if (SDL_Vulkan_CreateSurface(m_SDLHandle, instance.m_vkHandle, &m_surface) == SDL_FALSE)
+	if (SDL_Vulkan_CreateSurface(m_SDLHandle, VulkanContext::m_vkHandle, &m_surface) == SDL_FALSE)
 		throw std::runtime_error("failed to create SDLHandle surface!");
-
-	m_instance = &instance;
 }
 
-void SDLWindow::createSwapchain(const VkSurfaceFormatKHR desiredFormat)
+void SDLWindow::createSwapchain(const uint32_t deviceID, const VkSurfaceFormatKHR desiredFormat)
 {
 	if (m_surface == nullptr)
 		throw std::runtime_error("Surface not created");
@@ -101,14 +100,19 @@ void SDLWindow::createSwapchain(const VkSurfaceFormatKHR desiredFormat)
 		Logger::print("Swapchain already created, freed old swapchain");
 	}
 
-	const VkSurfaceFormatKHR selectedFormat = m_instance->getDevice().getGPU().getClosestFormat(*this, desiredFormat);
-	_createSwapchain(getSize().toExtent2D(), selectedFormat);
+	const VkSurfaceFormatKHR selectedFormat = VulkanContext::getDevice(deviceID).getGPU().getClosestFormat(*this, desiredFormat);
+	_createSwapchain(deviceID, getSize().toExtent2D(), selectedFormat);
 }
 
-uint32_t SDLWindow::acquireNextImage(const VkSemaphore semaphore, const VulkanFence* fence) const
+uint32_t SDLWindow::acquireNextImage(const uint32_t semaphoreID, const VulkanFence* fence) const
 {
+	if (m_swapchain.swapchain == nullptr)
+		throw std::runtime_error("Swapchain not created");
+
 	uint32_t imageIndex;
-	const VkResult result = vkAcquireNextImageKHR(m_instance->getDevice().m_vkHandle, m_swapchain.swapchain, UINT64_MAX, semaphore, fence != nullptr ? fence->m_vkHandle : nullptr, &imageIndex);
+	VulkanDevice& device = VulkanContext::getDevice(m_deviceID);
+	const VulkanSemaphore& semaphore = device.getSemaphore(semaphoreID);
+	const VkResult result = vkAcquireNextImageKHR(device.m_vkHandle, m_swapchain.swapchain, UINT64_MAX, semaphore.m_vkHandle, fence != nullptr ? fence->m_vkHandle : nullptr, &imageIndex);
 	if (result == VK_ERROR_OUT_OF_DATE_KHR)
 	{
 		return UINT32_MAX;
@@ -152,9 +156,9 @@ void SDLWindow::free()
 	freeSwapchain();
 	m_swapchain = {};
 
-	if (m_surface != nullptr && m_instance != nullptr)
+	if (m_surface != nullptr)
 	{
-		vkDestroySurfaceKHR(m_instance->m_vkHandle, m_surface, nullptr);
+		vkDestroySurfaceKHR(VulkanContext::m_vkHandle, m_surface, nullptr);
 		m_surface = nullptr;
 	}
 
@@ -163,12 +167,12 @@ void SDLWindow::free()
 	m_SDLHandle = nullptr;
 }
 
-void SDLWindow::present(const VulkanQueue& queue, const uint32_t imageIndex, const VkSemaphore waitSemaphore)
+void SDLWindow::present(const VulkanQueue& queue, const uint32_t imageIndex, const uint32_t waitSemaphore) const
 {
 	VkPresentInfoKHR presentInfo{};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	presentInfo.waitSemaphoreCount = waitSemaphore != nullptr ? 1 : 0;
-	presentInfo.pWaitSemaphores = &waitSemaphore;
+	presentInfo.waitSemaphoreCount = waitSemaphore != UINT32_MAX ? 1 : 0;
+	presentInfo.pWaitSemaphores = &VulkanContext::getDevice(m_deviceID).getSemaphore(waitSemaphore).m_vkHandle;
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &m_swapchain.swapchain;
 	presentInfo.pImageIndices = &imageIndex;
@@ -183,15 +187,16 @@ void SDLWindow::present(const VulkanQueue& queue, const uint32_t imageIndex, con
 
 void SDLWindow::freeSwapchain()
 {
-	if (m_swapchain.swapchain != nullptr && m_instance->getDevice().m_vkHandle != nullptr)
+	const VulkanDevice& device = VulkanContext::getDevice(m_deviceID);
+	if (m_swapchain.swapchain != nullptr && device.m_vkHandle != nullptr)
 	{
 		for (const auto& imageView : m_swapchain.imageViews)
 		{
-			vkDestroyImageView(m_instance->getDevice().m_vkHandle, imageView, nullptr);
+			vkDestroyImageView(device.m_vkHandle, imageView, nullptr);
 		}
 		m_swapchain.imageViews.clear();
 		m_swapchain.images.clear();
-		vkDestroySwapchainKHR(m_instance->getDevice().m_vkHandle, m_swapchain.swapchain, nullptr);
+		vkDestroySwapchainKHR(device.m_vkHandle, m_swapchain.swapchain, nullptr);
 		m_swapchain.swapchain = nullptr;
 		Logger::print("Freed swapchain");
 	}
@@ -199,20 +204,22 @@ void SDLWindow::freeSwapchain()
 
 void SDLWindow::rebuildSwapchain(const VkExtent2D newExtent)
 {
-	if (m_instance->getDevice().m_vkHandle == nullptr)
+	if (m_swapchain.swapchain == nullptr || VulkanContext::getDevice(m_deviceID).m_vkHandle == nullptr)
 		return;
 
 	m_swapchain.rebuilt = true;
 
 	Logger::pushContext("Swapchain rebuild");
 	freeSwapchain();
-	_createSwapchain(newExtent, m_swapchain.format);
+	_createSwapchain(m_deviceID, newExtent, m_swapchain.format);
 	Logger::popContext();
 }
 
-void SDLWindow::_createSwapchain(const VkExtent2D size, const VkSurfaceFormatKHR format)
+void SDLWindow::_createSwapchain(const uint32_t deviceID, const VkExtent2D size, const VkSurfaceFormatKHR format)
 {
-	const VkSurfaceCapabilitiesKHR capabilities = m_instance->getDevice().m_physicalDevice.getCapabilities(*this);
+	m_deviceID = deviceID;
+	const VulkanDevice& device = VulkanContext::getDevice(m_deviceID);
+	const VkSurfaceCapabilitiesKHR capabilities = device.m_physicalDevice.getCapabilities(*this);
 
 	VkSwapchainCreateInfoKHR createInfo{};
 	createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -231,7 +238,7 @@ void SDLWindow::_createSwapchain(const VkExtent2D size, const VkSurfaceFormatKHR
 	createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
 	createInfo.clipped = VK_TRUE;
 
-	if (vkCreateSwapchainKHR(m_instance->getDevice().m_vkHandle, &createInfo, nullptr, &m_swapchain.swapchain) != VK_SUCCESS)
+	if (vkCreateSwapchainKHR(device.m_vkHandle, &createInfo, nullptr, &m_swapchain.swapchain) != VK_SUCCESS)
 		throw std::runtime_error("failed to create swap chain!");
 	Logger::print("Created swapchain");
 
@@ -240,9 +247,9 @@ void SDLWindow::_createSwapchain(const VkExtent2D size, const VkSurfaceFormatKHR
 
 	// Get images
 	uint32_t imageCount;
-	vkGetSwapchainImagesKHR(m_instance->getDevice().m_vkHandle, m_swapchain.swapchain, &imageCount, nullptr);
+	vkGetSwapchainImagesKHR(device.m_vkHandle, m_swapchain.swapchain, &imageCount, nullptr);
     m_swapchain.images.resize(imageCount);
-    vkGetSwapchainImagesKHR(m_instance->getDevice().m_vkHandle, m_swapchain.swapchain, &imageCount, m_swapchain.images.data());
+    vkGetSwapchainImagesKHR(device.m_vkHandle, m_swapchain.swapchain, &imageCount, m_swapchain.images.data());
 
 	// Create image views
 	Logger::pushContext("Swapchain Image Views");
@@ -259,7 +266,7 @@ void SDLWindow::_createSwapchain(const VkExtent2D size, const VkSurfaceFormatKHR
         viewInfo.subresourceRange.baseArrayLayer = 0;
         viewInfo.subresourceRange.layerCount = 1;
 
-        if (vkCreateImageView(m_instance->getDevice().m_vkHandle, &viewInfo, nullptr, &m_swapchain.imageViews[i]) != VK_SUCCESS) {
+        if (vkCreateImageView(device.m_vkHandle, &viewInfo, nullptr, &m_swapchain.imageViews[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create swapchain image view!");
         }
 		Logger::print("Created image view");

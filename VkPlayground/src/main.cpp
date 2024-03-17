@@ -11,16 +11,14 @@
 #include "sdl_window.hpp"
 #include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
-#include "vulkan_gpu.hpp"
-#include "vulkan_queues.hpp"
-#include "vulkan_pipeline.hpp"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
 
 SDLWindow window;
-VulkanContext context;
+
+uint32_t deviceID = UINT32_MAX;
 
 glm::mat4 viewMatrix;
 glm::mat4 projMatrix;
@@ -65,7 +63,7 @@ std::vector<uint32_t> indices;
 
 VulkanGPU getCorrectGPU()
 {
-	const std::vector<VulkanGPU> gpus = context.getGPUs();
+	const std::vector<VulkanGPU> gpus = VulkanContext::getGPUs();
 	for (const VulkanGPU& gpu : gpus)
 	{
 		const VkPhysicalDeviceProperties properties = gpu.getProperties();
@@ -122,7 +120,7 @@ void loadModel(std::string_view filename) {
 
 uint32_t createRenderPass()
 {
-	const VkFormat depthFormat = context.getDevice().getGPU().findSupportedFormat(
+	const VkFormat depthFormat = VulkanContext::getDevice(deviceID).getGPU().findSupportedFormat(
 		{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL,
 		VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 
@@ -157,18 +155,18 @@ uint32_t createRenderPass()
 	dependency.dependencyFlags = 0;
 	builder.addDependency(dependency);
 
-	return context.getDevice().createRenderPass(builder, 0);
+	return VulkanContext::getDevice(deviceID).createRenderPass(builder, 0);
 }
 
-std::tuple<VkPipeline, VkPipeline, VkPipelineLayout> createGraphicsPipelines()
+std::tuple<uint32_t, uint32_t, uint32_t> createGraphicsPipelines(const uint32_t renderPassID)
 {
 	VkPushConstantRange pushConstantVertex{VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4)};
 	VkPushConstantRange pushConstantFragment{VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec3)};
-	const VkPipelineLayout layout = context.getDevice().createPipelineLayout({}, {pushConstantVertex, pushConstantFragment});
+	const uint32_t layout = VulkanContext::getDevice(deviceID).createPipelineLayout({}, {pushConstantVertex, pushConstantFragment});
 
-	const uint32_t vertexDepthShader = context.getDevice().createShader("shaders/depth.vert", VK_SHADER_STAGE_VERTEX_BIT);
-	const uint32_t vertexColorShader = context.getDevice().createShader("shaders/color.vert", VK_SHADER_STAGE_VERTEX_BIT);
-	const uint32_t fragmentColorShader = context.getDevice().createShader("shaders/color.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
+	const uint32_t vertexDepthShader = VulkanContext::getDevice(deviceID).createShader("shaders/depth.vert", VK_SHADER_STAGE_VERTEX_BIT);
+	const uint32_t vertexColorShader = VulkanContext::getDevice(deviceID).createShader("shaders/color.vert", VK_SHADER_STAGE_VERTEX_BIT);
+	const uint32_t fragmentColorShader = VulkanContext::getDevice(deviceID).createShader("shaders/color.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	VulkanBinding binding{0, VK_VERTEX_INPUT_RATE_VERTEX, sizeof(Vertex)};
 	binding.addAttribDescription(VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos));
@@ -179,7 +177,7 @@ std::tuple<VkPipeline, VkPipeline, VkPipelineLayout> createGraphicsPipelines()
 	colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 	colorBlendAttachment.blendEnable = VK_FALSE;
 
-	VulkanPipelineBuilder builder{&context.getDevice()};
+	VulkanPipelineBuilder builder{&VulkanContext::getDevice(deviceID)};
 
 	builder.addVertexBinding(binding);
 	builder.setInputAssemblyState(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
@@ -191,13 +189,13 @@ std::tuple<VkPipeline, VkPipeline, VkPipelineLayout> createGraphicsPipelines()
 	builder.setColorBlendState(VK_FALSE, VK_LOGIC_OP_COPY, {0.0f, 0.0f, 0.0f, 0.0f});
 	builder.setDynamicState({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR});
 	builder.addShaderStage(vertexDepthShader);
-	const VkPipeline depthPipeline = context.getDevice().createPipeline(builder, layout, 0, 0);
+	const uint32_t depthPipeline = VulkanContext::getDevice(deviceID).createPipeline(builder, layout, renderPassID, 0);
 
 	builder.setDepthStencilState(VK_TRUE, VK_FALSE, VK_COMPARE_OP_EQUAL);
 	builder.resetShaderStages();
 	builder.addShaderStage(vertexColorShader);
 	builder.addShaderStage(fragmentColorShader);
-	const VkPipeline colorPipeline = context.getDevice().createPipeline(builder, layout, 0, 1);
+	const uint32_t colorPipeline = VulkanContext::getDevice(deviceID).createPipeline(builder, layout, renderPassID, 1);
 
 	return {depthPipeline, colorPipeline, layout};
 }
@@ -205,22 +203,22 @@ std::tuple<VkPipeline, VkPipeline, VkPipelineLayout> createGraphicsPipelines()
 std::pair<uint32_t, VkImageView> createDepthImage(const VkFormat depthFormat)
 {
 	const VkExtent2D extent = window.getSwapchainExtent();
-	uint32_t depthImage = context.getDevice().createImage(VK_IMAGE_TYPE_2D, depthFormat, {extent.width, extent.height, 1}, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 0);
-	context.getDevice().getImage(depthImage).allocateFromFlags({VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false});
-	VulkanImage& depthImageObj = context.getDevice().getImage(depthImage);
+	uint32_t depthImage = VulkanContext::getDevice(deviceID).createImage(VK_IMAGE_TYPE_2D, depthFormat, {extent.width, extent.height, 1}, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 0);
+	VulkanContext::getDevice(deviceID).getImage(depthImage).allocateFromFlags({VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false});
+	VulkanImage& depthImageObj = VulkanContext::getDevice(deviceID).getImage(depthImage);
 	VkImageView depthImageView = depthImageObj.createImageView(depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 
 	return {depthImage, depthImageView};
 }
 
-VkFramebuffer createFramebuffer(const uint32_t renderPassID, const VkImageView colorAttachment, const VkImageView depthAttachment)
+uint32_t createFramebuffer(const uint32_t renderPassID, const VkImageView colorAttachment, const VkImageView depthAttachment)
 {
 	const std::vector<VkImageView> attachments{colorAttachment, depthAttachment};
 	const VkExtent2D extent = window.getSwapchainExtent();
-	return context.getDevice().createFramebuffer({extent.width, extent.height, 1}, context.getDevice().getRenderPass(renderPassID), attachments);
+	return VulkanContext::getDevice(deviceID).createFramebuffer({extent.width, extent.height, 1}, VulkanContext::getDevice(deviceID).getRenderPass(renderPassID), attachments);
 }
 
-void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPassID, const VkFramebuffer framebuffer, const VkPipeline depthPipeline, const VkPipeline colorPipeline, const VkPipelineLayout layout, VulkanBuffer& objectBuffer)
+void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPassID, const uint32_t framebufferID, const uint32_t depthPipelineID, const uint32_t colorPipelineID, const uint32_t layoutID, const uint32_t objectBufferID)
 {
 	Logger::pushContext("Command buffer recording");
 
@@ -228,7 +226,7 @@ void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPass
     clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
 
-	VkViewport viewport{};
+	VkViewport viewport;
     viewport.x = 0.0f;
     viewport.y = 0.0f;
     viewport.width = static_cast<float>(window.getSwapchainExtent().width);
@@ -236,43 +234,43 @@ void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPass
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
 
-	VkRect2D scissor{};
+	VkRect2D scissor;
     scissor.offset = {0, 0};
     scissor.extent = window.getSwapchainExtent();
 
 
-	VulkanCommandBuffer& graphicsBuffer = context.getDevice().getCommandBuffer(commandbufferID, 0);
+	VulkanCommandBuffer& graphicsBuffer = VulkanContext::getDevice(deviceID).getCommandBuffer(commandbufferID, 0);
 	graphicsBuffer.reset();
 	graphicsBuffer.beginRecording(0);
 
-	graphicsBuffer.cmdBeginRenderPass(context.getDevice().getRenderPass(renderPassID), framebuffer, window.getSwapchainExtent(), clearValues);
+	graphicsBuffer.cmdBeginRenderPass(renderPassID, framebufferID, window.getSwapchainExtent(), clearValues);
 
-		graphicsBuffer.cmdBindVertexBuffer(objectBuffer, 0);
-		graphicsBuffer.cmdBindIndexBuffer(objectBuffer, vertices.size() * sizeof(vertices[0]), VK_INDEX_TYPE_UINT32);
+		graphicsBuffer.cmdBindVertexBuffer(objectBufferID, 0);
+		graphicsBuffer.cmdBindIndexBuffer(objectBufferID, vertices.size() * sizeof(vertices[0]), VK_INDEX_TYPE_UINT32);
 
-		graphicsBuffer.cmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, depthPipeline);
+		graphicsBuffer.cmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, depthPipelineID);
 		graphicsBuffer.cmdSetViewport(viewport);
 		graphicsBuffer.cmdSetScissor(scissor);
 
-		for (int i = modelMatrices.size() - 1; i >= 0 ; --i)
+		for (int i = static_cast<int>(modelMatrices.size()) - 1; i >= 0 ; --i)
 		{
 			const glm::mat4 mvpMat = getMVPMat(i);
-			graphicsBuffer.cmdPushConstant(layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvpMat);
+			graphicsBuffer.cmdPushConstant(layoutID, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvpMat);
 			graphicsBuffer.cmdDrawIndexed(static_cast<uint32_t>(indices.size()), 0, 0);
 		}
 
 		graphicsBuffer.cmdNextSubpass();
 
-		graphicsBuffer.cmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, colorPipeline);
+		graphicsBuffer.cmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, colorPipelineID);
 		graphicsBuffer.cmdSetViewport(viewport);
 		graphicsBuffer.cmdSetScissor(scissor);
 
-		for (int i = modelMatrices.size() - 1; i >= 0 ; --i)
+		for (int i = static_cast<int>(modelMatrices.size()) - 1; i >= 0 ; --i)
 		{
 			const glm::mat4 mvpMat = getMVPMat(i);
 			const glm::vec3 modelColor = modelColors[i];
-			graphicsBuffer.cmdPushConstant(layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvpMat);
-			graphicsBuffer.cmdPushConstant(layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec3), &modelColor);
+			graphicsBuffer.cmdPushConstant(layoutID, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mvpMat);
+			graphicsBuffer.cmdPushConstant(layoutID, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(glm::mat4), sizeof(glm::vec3), &modelColor);
 			graphicsBuffer.cmdDrawIndexed(static_cast<uint32_t>(indices.size()), 0, 0);
 		}
 
@@ -288,8 +286,8 @@ int main()
 
 	// Create window and Vulkan context
 	window = SDLWindow{"Test", 1920, 1080};
-	context = VulkanContext{VK_API_VERSION_1_3, true, window.getRequiredVulkanExtensions()};
-	window.createSurface(context);
+	VulkanContext::init(VK_API_VERSION_1_3, true, window.getRequiredVulkanExtensions());
+	window.createSurface();
 
 	// Select GPU and get Queue Families
 	const VulkanGPU selectedGPU = getCorrectGPU();
@@ -313,7 +311,8 @@ int main()
 	const QueueSelection transferQueuePos = selector.addQueue(transferQueueFamily, 1.0);
 
 	// Create device and memory allocation system
-	VulkanDevice& device = context.createDevice(selectedGPU, selector, {VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {});
+	deviceID = VulkanContext::createDevice(selectedGPU, selector, {VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {});
+	VulkanDevice& device = VulkanContext::getDevice(deviceID);
 
 	std::cout << "\n*************************************************************************\n"
 	          <<   "*************************** Memory Properties ***************************\n"
@@ -324,14 +323,15 @@ int main()
 			  <<   "*************************************************************************\n"
 			  <<   "*************************************************************************\n\n";
 
-	window.createSwapchain({VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
+	window.createSwapchain(deviceID, {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
 
 	device.configureOneTimeQueue(transferQueuePos);
 	uint32_t graphicsBufferID = device.createCommandBuffer(graphicsQueueFamily, 0, false);
 
 	uint32_t renderPassID = createRenderPass();
-	const auto [depthPipeline, colorPipeline, pipelineLayout] = createGraphicsPipelines();
+	const auto [depthPipeline, colorPipeline, pipelineLayout] = createGraphicsPipelines(renderPassID);
 
+	// Configure buffers
 	device.configureStagingBuffer(5LL * 1024 * 1024, transferQueuePos);
 
 	loadModel("models/stanfordDragon.obj");
@@ -343,18 +343,22 @@ int main()
 		void* dataPtr = device.mapStagingBuffer(objectBuffer.getSize(), 0);
 		memcpy(dataPtr, vertices.data(), sizeof(vertices[0]) * vertices.size());
 		memcpy(static_cast<char*>(dataPtr) + sizeof(vertices[0]) * vertices.size(), indices.data(), sizeof(indices[0]) * indices.size());
-		device.dumpStagingBuffer(objectBuffer, objectBuffer.getSize(), 0, 0);
+		device.dumpStagingBuffer(objectBufferID, objectBuffer.getSize(), 0, 0);
 	}
 
+	// Configure depth buffer
 	const VkFormat depthFormat = device.getGPU().findSupportedFormat({VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	auto [depthImage, depthImageView] = createDepthImage(depthFormat);
 
-	std::vector<VkFramebuffer> framebuffers{window.getImageCount()};
+	// Create frame buffers
+	std::vector<uint32_t> framebuffers{};
+	framebuffers.resize(window.getImageCount());
 	for (uint32_t i = 0; i < window.getImageCount(); i++)
 		framebuffers[i] = createFramebuffer(renderPassID, window.getImageView(i), depthImageView);
 
-	VkSemaphore imageAvailableSemaphore = device.createSemaphore();
-	VkSemaphore renderFinishedSemaphore = device.createSemaphore();
+	// Create sync objects
+	uint32_t imageAvailableSemaphoreID = device.createSemaphore();
+	uint32_t renderFinishedSemaphoreID = device.createSemaphore();
 	uint32_t inFlightFenceID = device.createFence(true);
 	VulkanFence& inFlightFence = device.getFence(inFlightFenceID);
 
@@ -362,6 +366,7 @@ int main()
 	VulkanQueue presentQueue = device.getQueue(presentQueuePos);
 	VulkanCommandBuffer& graphicsBuffer = device.getCommandBuffer(graphicsBufferID, 0);
 
+	// Configure push constant data
 	{
 		Logger::pushContext("Camera and model config");
 
@@ -371,20 +376,21 @@ int main()
 
 		for (uint32_t i = 0; i < 5; i++)
 		{
+			float fi = static_cast<float>(i);
 			modelMatrices.emplace_back(1.0f);
-			modelMatrices.back() = glm::translate(modelMatrices.back(), glm::vec3(10.0f + -30.0f * i, -20.0f * i, -30.0f * i));
+			modelMatrices.back() = glm::translate(modelMatrices.back(), glm::vec3(10.0f + -30.0f * fi, -20.0f * fi, -30.0f * fi));
 			modelMatrices.back() = glm::rotate(modelMatrices.back(), glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 			modelMatrices.back() = glm::scale(modelMatrices.back(), {1.0, -1.0, 1.0});
 
-			float value = i / 5.0f;
+			float value = fi / 5.0f;
 
 			modelColors.emplace_back(value, 1.0f - value, 1.0f);
 		}
 
-
 		Logger::popContext();
 	}
 
+	// Main loop
 	uint64_t frameCounter = 0;
 	Logger::setRootContext("Frame" + std::to_string(frameCounter));
 	while (!window.shouldClose())
@@ -411,7 +417,7 @@ int main()
 			Logger::popContext();
 		}
 
-		uint32_t nextImage = window.acquireNextImage(imageAvailableSemaphore, nullptr);
+		uint32_t nextImage = window.acquireNextImage(imageAvailableSemaphoreID, nullptr);
 		if (nextImage == UINT32_MAX)
 		{
 			inFlightFence.reset();
@@ -421,10 +427,10 @@ int main()
 
 		inFlightFence.reset();
 
-		recordFramebuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBuffer);
+		recordFramebuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBufferID);
 
-		graphicsBuffer.submit(graphicsQueue, {{imageAvailableSemaphore, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}}, {renderFinishedSemaphore}, &inFlightFence);
-		window.present(presentQueue, nextImage, renderFinishedSemaphore);
+		graphicsBuffer.submit(graphicsQueue, {{imageAvailableSemaphoreID, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}}, {renderFinishedSemaphoreID}, inFlightFenceID);
+		window.present(presentQueue, nextImage, renderFinishedSemaphoreID);
 
 		frameCounter++;
 	}
@@ -434,6 +440,6 @@ int main()
 	// Free resources
 	Logger::setRootContext("Resource cleanup");
 	window.free();
-	context.free();
+	VulkanContext::free();
 	return 0;
 }

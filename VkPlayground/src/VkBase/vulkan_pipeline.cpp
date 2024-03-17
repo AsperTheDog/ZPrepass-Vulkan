@@ -2,7 +2,9 @@
 
 #include <array>
 
+#include "vulkan_context.hpp"
 #include "vulkan_device.hpp"
+#include "vulkan_shader.hpp"
 
 
 VulkanPipelineBuilder::VulkanPipelineBuilder(VulkanDevice* device)
@@ -227,4 +229,47 @@ std::vector<VkPipelineShaderStageCreateInfo> VulkanPipelineBuilder::createShader
 		shaderStagesInfo.push_back(stageInfo);
 	}
 	return shaderStagesInfo;
+}
+
+void VulkanPipeline::free()
+{
+	if (m_vkHandle != VK_NULL_HANDLE)
+	{
+		vkDestroyPipeline(m_device->m_vkHandle, m_vkHandle, nullptr);
+		m_vkHandle = VK_NULL_HANDLE;
+	}
+}
+
+uint32_t VulkanPipeline::getLayout() const
+{
+	return m_layout;
+}
+
+uint32_t VulkanPipeline::getRenderPass() const
+{
+	return m_renderPass;
+}
+
+uint32_t VulkanPipeline::getSubpass() const
+{
+	return m_subpass;
+}
+
+VulkanPipeline::VulkanPipeline(VulkanDevice& device, const VkPipeline handle, const uint32_t layout, const uint32_t renderPass, const uint32_t subpass)
+	: m_vkHandle(handle), m_layout(layout), m_renderPass(renderPass), m_subpass(subpass), m_device(&device)
+{
+}
+
+void VulkanPipelineLayout::free()
+{
+	if (m_vkHandle != VK_NULL_HANDLE)
+	{
+		vkDestroyPipelineLayout(VulkanContext::getDevice(m_device).m_vkHandle, m_vkHandle, nullptr);
+		m_vkHandle = VK_NULL_HANDLE;
+	}
+}
+
+VulkanPipelineLayout::VulkanPipelineLayout(const uint32_t device, const VkPipelineLayout handle)
+	: m_vkHandle(handle), m_device(device)
+{
 }

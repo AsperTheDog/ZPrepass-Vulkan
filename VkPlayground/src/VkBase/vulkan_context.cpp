@@ -11,9 +11,10 @@ std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
 };
 
-VulkanContext::VulkanContext(const uint32_t vulkanApiVersion, const bool enableValidationLayers, const std::vector<const char*>& extensions)
-	: m_validationLayersEnabled(enableValidationLayers)
+void VulkanContext::init(const uint32_t vulkanApiVersion, const bool enableValidationLayers, const std::vector<const char*>& extensions)
 {
+	m_validationLayersEnabled = enableValidationLayers;
+
 	VkApplicationInfo appInfo{};
 	appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	appInfo.pApplicationName = "Vulkan Application";
@@ -43,7 +44,7 @@ VulkanContext::VulkanContext(const uint32_t vulkanApiVersion, const bool enableV
 	}
 }
 
-std::vector<VulkanGPU> VulkanContext::getGPUs() const
+std::vector<VulkanGPU> VulkanContext::getGPUs()
 {
 	uint32_t gpuCount = 0;
 	vkEnumeratePhysicalDevices(m_vkHandle, &gpuCount, nullptr);
@@ -59,17 +60,7 @@ std::vector<VulkanGPU> VulkanContext::getGPUs() const
 	return gpus;
 }
 
-VulkanDevice& VulkanContext::getDevice()
-{
-	return m_device;
-}
-
-const VulkanDevice& VulkanContext::getDevice() const
-{
-	return m_device;
-}
-
-VulkanDevice& VulkanContext::createDevice(const VulkanGPU gpu, const QueueFamilySelector& queues, const std::vector<const char*>& extensions, const VkPhysicalDeviceFeatures& features)
+uint32_t VulkanContext::createDevice(const VulkanGPU gpu, const QueueFamilySelector& queues, const std::vector<const char*>& extensions, const VkPhysicalDeviceFeatures& features)
 {
 	VkDeviceCreateInfo deviceCreateInfo{};
 	deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -117,16 +108,47 @@ VulkanDevice& VulkanContext::createDevice(const VulkanGPU gpu, const QueueFamily
 		throw std::runtime_error("Failed to create logical device");
 	}
 
-	m_device = VulkanDevice(gpu, device);
-	return m_device;
+	m_devices.push_back({gpu, device});
+	return m_devices.back().getID();
+}
+
+VulkanDevice& VulkanContext::getDevice(const uint32_t index)
+{
+	for (auto& device : m_devices)
+	{
+		if (device.getID() == index)
+		{
+			return device;
+		}
+	}
+
+	throw std::runtime_error("Device not found");
+}
+
+void VulkanContext::freeDevice(const uint32_t index)
+{
+	for (auto it = m_devices.begin(); it != m_devices.end(); ++it)
+	{
+		if (it->getID() == index)
+		{
+			m_devices.erase(it);
+			break;
+		}
+	}
+}
+
+void VulkanContext::freeDevice(const VulkanDevice& device)
+{
+	freeDevice(device.getID());
 }
 
 void VulkanContext::free()
 {
-	if (m_device.m_vkHandle != VK_NULL_HANDLE)
+	for (auto& device : m_devices)
 	{
-		m_device.free();
+		device.free();
 	}
+	m_devices.clear();
 
 	vkDestroyInstance(m_vkHandle, nullptr);
 	m_vkHandle = VK_NULL_HANDLE;

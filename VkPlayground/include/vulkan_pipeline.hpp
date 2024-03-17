@@ -3,6 +3,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "vulkan_base.hpp"
 #include "vulkan_binding.hpp"
 
 class VulkanDevice;
@@ -72,8 +73,42 @@ private:
 	friend class VulkanDevice;
 };
 
-class VulkanPipeline
+class VulkanPipeline : public VulkanBase
 {
-	
+public:
+	[[nodiscard]] uint32_t getLayout() const;
+	[[nodiscard]] uint32_t getRenderPass() const;
+	[[nodiscard]] uint32_t getSubpass() const;
+
+private:
+	void free();
+
+	VulkanPipeline() = default;
+	VulkanPipeline(VulkanDevice& device, VkPipeline handle, uint32_t layout, uint32_t renderPass, uint32_t subpass);
+
+	VkPipeline m_vkHandle;
+
+	uint32_t m_layout;
+	uint32_t m_renderPass;
+	uint32_t m_subpass;
+
+	VulkanDevice* m_device;
+
+	friend class VulkanDevice;
+	friend class VulkanCommandBuffer;
 };
 
+class VulkanPipelineLayout : public VulkanBase
+{
+private:
+	void free();
+
+	VulkanPipelineLayout(uint32_t device, VkPipelineLayout handle);
+
+	VkPipelineLayout m_vkHandle = VK_NULL_HANDLE;
+
+	uint32_t m_device;
+
+	friend class VulkanDevice;
+	friend class VulkanCommandBuffer;
+};

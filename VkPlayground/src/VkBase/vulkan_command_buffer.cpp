@@ -5,7 +5,11 @@
 #include <vector>
 
 #include "vulkan_buffer.hpp"
-#include "vulkan_fence.hpp"
+#include "vulkan_context.hpp"
+#include "vulkan_device.hpp"
+#include "vulkan_sync.hpp"
+#include "vulkan_framebuffer.hpp"
+#include "vulkan_pipeline.hpp"
 #include "vulkan_queues.hpp"
 #include "vulkan_render_pass.hpp"
 
@@ -37,32 +41,35 @@ void VulkanCommandBuffer::endRecording()
 	m_isRecording = false;
 }
 
-void VulkanCommandBuffer::cmdCopyBuffer(const VulkanBuffer& source, const VulkanBuffer& destination, const std::vector<VkBufferCopy>& copyRegions)
+void VulkanCommandBuffer::cmdCopyBuffer(const uint32_t source, const uint32_t destination, const std::vector<VkBufferCopy>& copyRegions) const
+{
+	if (!m_isRecording)
+	{
+		throw std::runtime_error("Command buffer is not recording");
+	}
+	
+	VulkanDevice& device = VulkanContext::getDevice(m_device);
+	vkCmdCopyBuffer(m_vkHandle, device.getBuffer(source).m_vkHandle, device.getBuffer(destination).m_vkHandle, static_cast<uint32_t>(copyRegions.size()), copyRegions.data());
+}
+
+void VulkanCommandBuffer::cmdPushConstant(const uint32_t layout, const VkShaderStageFlags stageFlags, const uint32_t offset, const uint32_t size, const void* pValues) const
 {
 	if (!m_isRecording)
 	{
 		throw std::runtime_error("Command buffer is not recording");
 	}
 
-	vkCmdCopyBuffer(m_vkHandle, source.m_vkHandle, destination.m_vkHandle, static_cast<uint32_t>(copyRegions.size()), copyRegions.data());
+	vkCmdPushConstants(m_vkHandle, VulkanContext::getDevice(m_device).getPipelineLayout(layout).m_vkHandle, stageFlags, offset, size, pValues);
 }
 
-void VulkanCommandBuffer::cmdPushConstant(const VkPipelineLayout layout, const VkShaderStageFlags stageFlags, const uint32_t offset, const uint32_t size, const void* pValues)
-{
-	if (!m_isRecording)
-	{
-		throw std::runtime_error("Command buffer is not recording");
-	}
-
-	vkCmdPushConstants(m_vkHandle, layout, stageFlags, offset, size, pValues);
-}
-
-void VulkanCommandBuffer::submit(const VulkanQueue& queue, const std::vector<std::pair<VkSemaphore, VkSemaphoreWaitFlags>>& waitSemaphoreData, const std::vector<VkSemaphore>& signalSemaphores, const VulkanFence* fence) const
+void VulkanCommandBuffer::submit(const VulkanQueue& queue, const std::vector<std::pair<uint32_t, VkSemaphoreWaitFlags>>& waitSemaphoreData, const std::vector<uint32_t>& signalSemaphores, const uint32_t fence) const
 {
 	if (m_isRecording)
 	{
 		throw std::runtime_error("Command buffer is still recording");
 	}
+
+	VulkanDevice& device = VulkanContext::getDevice(m_device);
 
 	std::vector<VkSemaphore> waitSemaphores{};
 	std::vector<VkPipelineStageFlags> waitStages{};
@@ -70,8 +77,15 @@ void VulkanCommandBuffer::submit(const VulkanQueue& queue, const std::vector<std
 	waitStages.resize(waitSemaphoreData.size());
 	for (size_t i = 0; i < waitSemaphores.size(); i++)
 	{
-		waitSemaphores[i] = waitSemaphoreData[i].first;
+		waitSemaphores[i] = device.getSemaphore(waitSemaphoreData[i].first).m_vkHandle;
 		waitStages[i] = waitSemaphoreData[i].second;
+	}
+
+	std::vector<VkSemaphore> signalSemaphoresVk{};
+	signalSemaphoresVk.reserve(signalSemaphores.size());
+	for (const auto& semaphore : signalSemaphores)
+	{
+		signalSemaphoresVk.push_back(device.getSemaphore(semaphore).m_vkHandle);
 	}
 
 	VkSubmitInfo submitInfo{};
@@ -81,10 +95,10 @@ void VulkanCommandBuffer::submit(const VulkanQueue& queue, const std::vector<std
 	submitInfo.waitSemaphoreCount = static_cast<uint32_t>(waitSemaphores.size());
 	submitInfo.pWaitSemaphores = waitSemaphores.data();
 	submitInfo.pWaitDstStageMask = waitStages.data();
-	submitInfo.signalSemaphoreCount = static_cast<uint32_t>(signalSemaphores.size());
-	submitInfo.pSignalSemaphores = signalSemaphores.data();
+	submitInfo.signalSemaphoreCount = static_cast<uint32_t>(signalSemaphoresVk.size());
+	submitInfo.pSignalSemaphores = signalSemaphoresVk.data();
 
-	vkQueueSubmit(queue.m_vkHandle, 1, &submitInfo, fence != nullptr ? fence->m_vkHandle : VK_NULL_HANDLE);
+	vkQueueSubmit(queue.m_vkHandle, 1, &submitInfo, fence != UINT32_MAX ? device.getFence(fence).m_vkHandle : VK_NULL_HANDLE);
 }
 
 void VulkanCommandBuffer::reset() const
@@ -97,12 +111,12 @@ void VulkanCommandBuffer::reset() const
 	vkResetCommandBuffer(m_vkHandle, 0);
 }
 
-void VulkanCommandBuffer::cmdBeginRenderPass(const VulkanRenderPass& renderPass, const VkFramebuffer frameBuffer, const VkExtent2D extent, const std::vector<VkClearValue>& clearValues) const
+void VulkanCommandBuffer::cmdBeginRenderPass(const uint32_t renderPass, const uint32_t frameBuffer, const VkExtent2D extent, const std::vector<VkClearValue>& clearValues) const
 {
 	VkRenderPassBeginInfo beginInfo{};
 	beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-	beginInfo.renderPass = renderPass.m_vkHandle;
-	beginInfo.framebuffer = frameBuffer;
+	beginInfo.renderPass = VulkanContext::getDevice(m_device).getRenderPass(renderPass).m_vkHandle;
+	beginInfo.framebuffer = VulkanContext::getDevice(m_device).getFramebuffer(frameBuffer).m_vkHandle;
 	beginInfo.renderArea.offset = { 0, 0 };
 	beginInfo.renderArea.extent = extent;
 
@@ -117,17 +131,17 @@ void VulkanCommandBuffer::cmdEndRenderPass() const
 	vkCmdEndRenderPass(m_vkHandle);
 }
 
-void VulkanCommandBuffer::cmdBindPipeline(const VkPipelineBindPoint bindPoint, const VkPipeline pipeline)
+void VulkanCommandBuffer::cmdBindPipeline(const VkPipelineBindPoint bindPoint, const uint32_t pipelineID) const
 {
 	if (!m_isRecording)
 	{
 		throw std::runtime_error("Command buffer is not recording");
 	}
 
-	vkCmdBindPipeline(m_vkHandle, bindPoint, pipeline);
+	vkCmdBindPipeline(m_vkHandle, bindPoint, VulkanContext::getDevice(m_device).getPipeline(pipelineID).m_vkHandle);
 }
 
-void VulkanCommandBuffer::cmdNextSubpass()
+void VulkanCommandBuffer::cmdNextSubpass() const
 {
 	if (!m_isRecording)
 	{
@@ -140,7 +154,7 @@ void VulkanCommandBuffer::cmdNextSubpass()
 void VulkanCommandBuffer::cmdPipelineBarrier(const VkPipelineStageFlags srcStageMask, const VkPipelineStageFlags dstStageMask, const VkDependencyFlags dependencyFlags, 
 	const std::vector<VkMemoryBarrier>& memoryBarriers,
 	const std::vector<VkBufferMemoryBarrier>& bufferMemoryBarriers,
-	const std::vector<VkImageMemoryBarrier>& imageMemoryBarriers)
+	const std::vector<VkImageMemoryBarrier>& imageMemoryBarriers) const
 {
 	if (!m_isRecording)
 	{
@@ -150,17 +164,17 @@ void VulkanCommandBuffer::cmdPipelineBarrier(const VkPipelineStageFlags srcStage
 	vkCmdPipelineBarrier(m_vkHandle, srcStageMask, dstStageMask, dependencyFlags, static_cast<uint32_t>(memoryBarriers.size()), memoryBarriers.data(), static_cast<uint32_t>(bufferMemoryBarriers.size()), bufferMemoryBarriers.data(), static_cast<uint32_t>(imageMemoryBarriers.size()), imageMemoryBarriers.data());
 }
 
-void VulkanCommandBuffer::cmdBindVertexBuffer(const VulkanBuffer& buffer, const VkDeviceSize offset)
+void VulkanCommandBuffer::cmdBindVertexBuffer(const uint32_t buffer, const VkDeviceSize offset) const
 {
 	if (!m_isRecording)
 	{
 		throw std::runtime_error("Command buffer is not recording");
 	}
 
-	vkCmdBindVertexBuffers(m_vkHandle, 0, 1, &buffer.m_vkHandle, &offset);
+	vkCmdBindVertexBuffers(m_vkHandle, 0, 1, &VulkanContext::getDevice(m_device).getBuffer(buffer).m_vkHandle, &offset);
 }
 
-void VulkanCommandBuffer::cmdBindVertexBuffers(const std::vector<VulkanBuffer>& buffers, const std::vector<VkDeviceSize>& offsets)
+void VulkanCommandBuffer::cmdBindVertexBuffers(const std::vector<uint32_t>& bufferIDs, const std::vector<VkDeviceSize>& offsets) const
 {
 	if (!m_isRecording)
 	{
@@ -168,25 +182,25 @@ void VulkanCommandBuffer::cmdBindVertexBuffers(const std::vector<VulkanBuffer>& 
 	}
 
 	std::vector<VkBuffer> vkBuffers;
-	vkBuffers.reserve(buffers.size());
-	for (const auto& buffer : buffers)
+	vkBuffers.reserve(bufferIDs.size());
+	for (const auto& buffer : bufferIDs)
 	{
-		vkBuffers.push_back(buffer.m_vkHandle);
+		vkBuffers.push_back(VulkanContext::getDevice(m_device).getBuffer(buffer).m_vkHandle);
 	}
 	vkCmdBindVertexBuffers(m_vkHandle, 0, static_cast<uint32_t>(vkBuffers.size()), vkBuffers.data(), offsets.data());
 }
 
-void VulkanCommandBuffer::cmdBindIndexBuffer(const VulkanBuffer& buffer, const VkDeviceSize offset, const VkIndexType indexType)
+void VulkanCommandBuffer::cmdBindIndexBuffer(const uint32_t bufferID, const VkDeviceSize offset, const VkIndexType indexType) const
 {
 	if (!m_isRecording)
 	{
 		throw std::runtime_error("Command buffer is not recording");
 	}
 
-	vkCmdBindIndexBuffer(m_vkHandle, buffer.m_vkHandle, offset, indexType);
+	vkCmdBindIndexBuffer(m_vkHandle, VulkanContext::getDevice(m_device).getBuffer(bufferID).m_vkHandle, offset, indexType);
 }
 
-void VulkanCommandBuffer::cmdSetViewport(const VkViewport& viewport)
+void VulkanCommandBuffer::cmdSetViewport(const VkViewport& viewport) const
 {
 	if (!m_isRecording)
 	{
@@ -196,7 +210,7 @@ void VulkanCommandBuffer::cmdSetViewport(const VkViewport& viewport)
 	vkCmdSetViewport(m_vkHandle, 0, 1, &viewport);
 }
 
-void VulkanCommandBuffer::cmdSetScissor(const VkRect2D scissor)
+void VulkanCommandBuffer::cmdSetScissor(const VkRect2D scissor) const
 {
 	if (!m_isRecording)
 	{
@@ -206,7 +220,7 @@ void VulkanCommandBuffer::cmdSetScissor(const VkRect2D scissor)
 	vkCmdSetScissor(m_vkHandle, 0, 1, &scissor);
 }
 
-void VulkanCommandBuffer::cmdDraw(const uint32_t vertexCount, const uint32_t firstVertex)
+void VulkanCommandBuffer::cmdDraw(const uint32_t vertexCount, const uint32_t firstVertex) const
 {
 	if (!m_isRecording)
 	{
@@ -216,7 +230,7 @@ void VulkanCommandBuffer::cmdDraw(const uint32_t vertexCount, const uint32_t fir
 	vkCmdDraw(m_vkHandle, vertexCount, 1, firstVertex, 0);
 }
 
-void VulkanCommandBuffer::cmdDrawIndexed(const uint32_t indexCount, const uint32_t  firstIndex, const int32_t  vertexOffset)
+void VulkanCommandBuffer::cmdDrawIndexed(const uint32_t indexCount, const uint32_t  firstIndex, const int32_t  vertexOffset) const
 {
 	if (!m_isRecording)
 	{
@@ -225,12 +239,7 @@ void VulkanCommandBuffer::cmdDrawIndexed(const uint32_t indexCount, const uint32
 	vkCmdDrawIndexed(m_vkHandle, indexCount, 1, firstIndex, vertexOffset, 0);
 }
 
-uint32_t VulkanCommandBuffer::getID() const
-{
-	return m_id;
-}
-
-VulkanCommandBuffer::VulkanCommandBuffer(VulkanDevice& device, const VkCommandBuffer commandBuffer, const bool isSecondary, const uint32_t familyIndex, const uint32_t threadID)
-	: m_vkHandle(commandBuffer), m_id(s_idCounter++), m_isSecondary(isSecondary), m_familyIndex(familyIndex), m_threadID(threadID), m_device(&device)
+VulkanCommandBuffer::VulkanCommandBuffer(uint32_t device, const VkCommandBuffer commandBuffer, const bool isSecondary, const uint32_t familyIndex, const uint32_t threadID)
+	: m_vkHandle(commandBuffer), m_isSecondary(isSecondary), m_familyIndex(familyIndex), m_threadID(threadID), m_device(device)
 {
 }

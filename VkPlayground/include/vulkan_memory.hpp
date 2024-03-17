@@ -7,6 +7,8 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "vulkan_base.hpp"
+
 class VulkanGPU;
 class VulkanDevice;
 
@@ -21,7 +23,6 @@ public:
 	[[nodiscard]] bool doesMemoryContainProperties(uint32_t type, VkMemoryPropertyFlags property) const;
 
 private:
-	MemoryStructure() = default;
 	explicit MemoryStructure(VulkanGPU gpu);
 
 	VkPhysicalDeviceMemoryProperties m_memoryProperties;
@@ -29,7 +30,7 @@ private:
 	friend class VulkanMemoryAllocator;
 };
 
-class MemoryChunk
+class MemoryChunk : public VulkanBase
 {
 public:
 	struct MemoryBlock
@@ -52,7 +53,6 @@ private:
 	MemoryChunk(VkDeviceSize size, uint32_t memoryType, VkDeviceMemory vkHandle);
 
 	void defragment();
-	uint32_t m_chunkID;
 
 	VkDeviceSize m_size;
 	uint32_t m_memoryType;
@@ -64,8 +64,6 @@ private:
 	// Metadata
 	VkDeviceSize m_unallocatedSize;
 	VkDeviceSize m_biggestChunk = 0;
-
-	inline static uint32_t m_chunkCount = 0;
 
 	friend class VulkanResource;
 	friend class VulkanMemoryAllocator;
@@ -81,7 +79,6 @@ public:
 		VkMemoryPropertyFlags undesiredProperties;
 		bool allowUndesired;
 	};
-	void free();
 
 	MemoryChunk::MemoryBlock allocate(VkDeviceSize size, VkDeviceSize alignment, uint32_t memoryType);
 	MemoryChunk::MemoryBlock searchAndAllocate(VkDeviceSize size, VkDeviceSize alignment, MemoryPropertyPreferences properties, uint32_t typeFilter, bool includeHidden = false);
@@ -96,16 +93,17 @@ public:
 	[[nodiscard]] bool isMemoryTypeHidden(unsigned value) const;
 
 private:
+	void free();
 
-	VulkanMemoryAllocator() = default;
 	explicit VulkanMemoryAllocator(const VulkanDevice& device, VkDeviceSize defaultChunkSize = 20LL * 1024 * 1024);
+
 	MemoryStructure m_memoryStructure;
 	VkDeviceSize m_chunkSize;
 
 	std::vector<MemoryChunk> m_memoryChunks;
 	std::set<uint32_t> m_hiddenTypes;
 
-	VkDevice m_device = nullptr;
+	uint32_t m_device;
 
 	friend class VulkanDevice;
 };
