@@ -14,7 +14,7 @@ class VulkanDevice;
 class VulkanCommandBuffer : public VulkanBase
 {
 public:
-	void beginRecording(VkCommandBufferUsageFlags flags);
+	void beginRecording(VkCommandBufferUsageFlags flags = 0);
 	void endRecording();
 	void submit(const VulkanQueue& queue, const std::vector<std::pair<uint32_t, VkSemaphoreWaitFlags>>& waitSemaphoreData, const std::vector<uint32_t>& signalSemaphores, const uint32_t fence = UINT32_MAX) const;
 	void reset() const;

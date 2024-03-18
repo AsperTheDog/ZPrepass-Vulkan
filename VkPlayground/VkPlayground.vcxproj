@@ -144,6 +144,7 @@
     <ClCompile Include="src\VkBase\vulkan_binding.cpp" />
     <ClCompile Include="src\VkBase\vulkan_context.cpp" />
     <ClCompile Include="src\VkBase\vulkan_device.cpp" />
+    <ClCompile Include="src\VkBase\vulkan_framebuffer.cpp" />
     <ClCompile Include="src\VkBase\vulkan_gpu.cpp" />
     <ClCompile Include="src\VkBase\vulkan_queues.cpp" />
     <ClCompile Include="src\VkBase\vulkan_memory.cpp" />
@@ -154,12 +155,15 @@
     <ClCompile Include="src\VkBase\vulkan_pipeline.cpp" />
     <ClCompile Include="src\VkBase\vulkan_shader.cpp" />
     <ClCompile Include="src\VkBase\vulkan_image.cpp" />
-    <ClCompile Include="src\VkBase\vulkan_fence.cpp" />
+    <ClCompile Include="src\VkBase\vulkan_sync.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\tiny_obj_loader.h" />
+    <ClInclude Include="include\vulkan_base.hpp" />
     <ClInclude Include="include\vulkan_binding.hpp" />
     <ClInclude Include="include\logger.hpp" />
+    <ClInclude Include="include\vulkan_framebuffer.hpp" />
+    <ClInclude Include="include\vulkan_sync.hpp" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="include\vulkan_context.hpp" />
     <ClInclude Include="include\vulkan_device.hpp" />
@@ -174,10 +178,6 @@
     <ClInclude Include="include\vulkan_pipeline.hpp" />
     <ClInclude Include="include\vulkan_shader.hpp" />
     <ClInclude Include="include\vulkan_image.hpp" />
-    <ClInclude Include="include\vulkan_fence.hpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="VkPlayground.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

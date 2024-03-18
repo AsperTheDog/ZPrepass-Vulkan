@@ -241,7 +241,7 @@ void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPass
 
 	VulkanCommandBuffer& graphicsBuffer = VulkanContext::getDevice(deviceID).getCommandBuffer(commandbufferID, 0);
 	graphicsBuffer.reset();
-	graphicsBuffer.beginRecording(0);
+	graphicsBuffer.beginRecording();
 
 	graphicsBuffer.cmdBeginRenderPass(renderPassID, framebufferID, window.getSwapchainExtent(), clearValues);
 
