@@ -218,7 +218,7 @@ uint32_t createFramebuffer(const uint32_t renderPassID, const VkImageView colorA
 	return VulkanContext::getDevice(deviceID).createFramebuffer({extent.width, extent.height, 1}, VulkanContext::getDevice(deviceID).getRenderPass(renderPassID), attachments);
 }
 
-void recordFramebuffer(const uint32_t commandbufferID, const uint32_t renderPassID, const uint32_t framebufferID, const uint32_t depthPipelineID, const uint32_t colorPipelineID, const uint32_t layoutID, const uint32_t objectBufferID)
+void recordCommandBuffer(const uint32_t commandbufferID, const uint32_t renderPassID, const uint32_t framebufferID, const uint32_t depthPipelineID, const uint32_t colorPipelineID, const uint32_t layoutID, const uint32_t objectBufferID)
 {
 	Logger::pushContext("Command buffer recording");
 
@@ -427,7 +427,7 @@ int main()
 
 		inFlightFence.reset();
 
-		recordFramebuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBufferID);
+		recordCommandBuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBufferID);
 
 		graphicsBuffer.submit(graphicsQueue, {{imageAvailableSemaphoreID, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}}, {renderFinishedSemaphoreID}, inFlightFenceID);
 		window.present(presentQueue, nextImage, renderFinishedSemaphoreID);
