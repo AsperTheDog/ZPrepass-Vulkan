@@ -1,4 +1,6 @@
 
+#include <SDL2/SDL_main.h>
+
 #include <iostream>
 #include <stdexcept>
 #include <array>
@@ -180,9 +182,9 @@ std::tuple<uint32_t, uint32_t, uint32_t> createGraphicsPipelines(const uint32_t 
 	VulkanPipelineBuilder builder{&VulkanContext::getDevice(deviceID)};
 
 	builder.addVertexBinding(binding);
-	builder.setInputAssemblyState(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
+	builder.setInputAssemblyState(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_FALSE);
 	builder.setViewportState(1, 1);
-	builder.setRasterizationState(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+	builder.setRasterizationState(VK_POLYGON_MODE_FILL);
 	builder.setMultisampleState(VK_SAMPLE_COUNT_1_BIT, VK_FALSE, 1.0f);
 	builder.setDepthStencilState(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
 	builder.addColorBlendAttachment(colorBlendAttachment);
@@ -280,166 +282,177 @@ void recordCommandBuffer(const uint32_t commandbufferID, const uint32_t renderPa
 	Logger::popContext();
 }
 
-int main()
+int main(int argc, char* argv[])
 {
-	Logger::setRootContext("Initialization");
+	try {
+		Logger::setRootContext("Initialization");
 
-	// Create window and Vulkan context
-	window = SDLWindow{"Test", 1920, 1080};
-	VulkanContext::init(VK_API_VERSION_1_3, true, window.getRequiredVulkanExtensions());
-	window.createSurface();
+		// Create window and Vulkan context
+		window = SDLWindow{"Test", 1920, 1080};
+#ifdef _DEBUG
+		VulkanContext::init(VK_API_VERSION_1_0, true, window.getRequiredVulkanExtensions());
+#else
+		VulkanContext::init(VK_API_VERSION_1_0, false, window.getRequiredVulkanExtensions());
+#endif
+		window.createSurface();
 
-	// Select GPU and get Queue Families
-	const VulkanGPU selectedGPU = getCorrectGPU();
-	const GPUQueueStructure queueStructure = selectedGPU.getQueueFamilies();
+		// Select GPU and get Queue Families
+		const VulkanGPU selectedGPU = getCorrectGPU();
+		const GPUQueueStructure queueStructure = selectedGPU.getQueueFamilies();
 
-	std::cout << "\n*************************************************************************\n"
-			  << "******************************* Structure *******************************\n"
-			  << "*************************************************************************\n\n"
-			  << queueStructure.toString();
+		std::cout << "\n*************************************************************************\n"
+				  << "******************************* Structure *******************************\n"
+				  << "*************************************************************************\n\n"
+				  << queueStructure.toString();
 
-	const QueueFamily graphicsQueueFamily = queueStructure.findQueueFamily(VK_QUEUE_GRAPHICS_BIT);
-	const QueueFamily presentQueueFamily = queueStructure.findPresentQueueFamily(window.getSurface());
-	const QueueFamily transferQueueFamily = queueStructure.findQueueFamily(VK_QUEUE_TRANSFER_BIT);
+		const QueueFamily graphicsQueueFamily = queueStructure.findQueueFamily(VK_QUEUE_GRAPHICS_BIT);
+		const QueueFamily presentQueueFamily = queueStructure.findPresentQueueFamily(window.getSurface());
+		const QueueFamily transferQueueFamily = queueStructure.findQueueFamily(VK_QUEUE_TRANSFER_BIT);
 
-	// Select Queue Families and assign queues
-	QueueFamilySelector selector{queueStructure};
-	selector.selectQueueFamily(graphicsQueueFamily, QueueFamilyTypeBits::GRAPHICS);
-	selector.selectQueueFamily(presentQueueFamily, QueueFamilyTypeBits::PRESENT);
-	const QueueSelection graphicsQueuePos = selector.getOrAddQueue(graphicsQueueFamily, 1.0);
-	const QueueSelection presentQueuePos = selector.getOrAddQueue(presentQueueFamily, 1.0);
-	const QueueSelection transferQueuePos = selector.addQueue(transferQueueFamily, 1.0);
+		// Select Queue Families and assign queues
+		QueueFamilySelector selector{queueStructure};
+		selector.selectQueueFamily(graphicsQueueFamily, QueueFamilyTypeBits::GRAPHICS);
+		selector.selectQueueFamily(presentQueueFamily, QueueFamilyTypeBits::PRESENT);
+		const QueueSelection graphicsQueuePos = selector.getOrAddQueue(graphicsQueueFamily, 1.0);
+		const QueueSelection presentQueuePos = selector.getOrAddQueue(presentQueueFamily, 1.0);
+		const QueueSelection transferQueuePos = selector.addQueue(transferQueueFamily, 1.0);
 
-	// Create device and memory allocation system
-	deviceID = VulkanContext::createDevice(selectedGPU, selector, {VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {});
-	VulkanDevice& device = VulkanContext::getDevice(deviceID);
+		// Create device and memory allocation system
+		deviceID = VulkanContext::createDevice(selectedGPU, selector, {VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {});
+		VulkanDevice& device = VulkanContext::getDevice(deviceID);
 
-	std::cout << "\n*************************************************************************\n"
-	          <<   "*************************** Memory Properties ***************************\n"
-	          <<   "*************************************************************************\n\n"
-			  << device.getMemoryAllocator().getMemoryStructure().toString();
+		std::cout << "\n*************************************************************************\n"
+		          <<   "*************************** Memory Properties ***************************\n"
+		          <<   "*************************************************************************\n\n"
+				  << device.getMemoryAllocator().getMemoryStructure().toString();
 
-	std::cout << "\n*************************************************************************\n"
-			  <<   "*************************************************************************\n"
-			  <<   "*************************************************************************\n\n";
+		std::cout << "\n*************************************************************************\n"
+				  <<   "*************************************************************************\n"
+				  <<   "*************************************************************************\n\n";
 
-	window.createSwapchain(deviceID, {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
+		window.createSwapchain(deviceID, {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR});
 
-	device.configureOneTimeQueue(transferQueuePos);
-	uint32_t graphicsBufferID = device.createCommandBuffer(graphicsQueueFamily, 0, false);
+		device.configureOneTimeQueue(transferQueuePos);
+		uint32_t graphicsBufferID = device.createCommandBuffer(graphicsQueueFamily, 0, false);
 
-	uint32_t renderPassID = createRenderPass();
-	const auto [depthPipeline, colorPipeline, pipelineLayout] = createGraphicsPipelines(renderPassID);
+		uint32_t renderPassID = createRenderPass();
+		const auto [depthPipeline, colorPipeline, pipelineLayout] = createGraphicsPipelines(renderPassID);
 
-	// Configure buffers
-	device.configureStagingBuffer(5LL * 1024 * 1024, transferQueuePos);
+		// Configure buffers
+		device.configureStagingBuffer(5LL * 1024 * 1024, transferQueuePos);
 
-	loadModel("models/stanfordDragon.obj");
-	uint32_t objectBufferID = device.createBuffer(sizeof(vertices[0]) * vertices.size() + sizeof(indices[0]) * indices.size(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-	VulkanBuffer& objectBuffer = device.getBuffer(objectBufferID);
-	objectBuffer.allocateFromFlags({VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false});
+		loadModel("models/stanfordDragon.obj");
+		uint32_t objectBufferID = device.createBuffer(sizeof(vertices[0]) * vertices.size() + sizeof(indices[0]) * indices.size(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+		VulkanBuffer& objectBuffer = device.getBuffer(objectBufferID);
+		objectBuffer.allocateFromFlags({VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, false});
 
-	{
-		void* dataPtr = device.mapStagingBuffer(objectBuffer.getSize(), 0);
-		memcpy(dataPtr, vertices.data(), sizeof(vertices[0]) * vertices.size());
-		memcpy(static_cast<char*>(dataPtr) + sizeof(vertices[0]) * vertices.size(), indices.data(), sizeof(indices[0]) * indices.size());
-		device.dumpStagingBuffer(objectBufferID, objectBuffer.getSize(), 0, 0);
-	}
-
-	// Configure depth buffer
-	const VkFormat depthFormat = device.getGPU().findSupportedFormat({VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
-	auto [depthImage, depthImageView] = createDepthImage(depthFormat);
-
-	// Create frame buffers
-	std::vector<uint32_t> framebuffers{};
-	framebuffers.resize(window.getImageCount());
-	for (uint32_t i = 0; i < window.getImageCount(); i++)
-		framebuffers[i] = createFramebuffer(renderPassID, window.getImageView(i), depthImageView);
-
-	// Create sync objects
-	uint32_t imageAvailableSemaphoreID = device.createSemaphore();
-	uint32_t renderFinishedSemaphoreID = device.createSemaphore();
-	uint32_t inFlightFenceID = device.createFence(true);
-	VulkanFence& inFlightFence = device.getFence(inFlightFenceID);
-
-	VulkanQueue graphicsQueue = device.getQueue(graphicsQueuePos);
-	VulkanQueue presentQueue = device.getQueue(presentQueuePos);
-	VulkanCommandBuffer& graphicsBuffer = device.getCommandBuffer(graphicsBufferID, 0);
-
-	// Configure push constant data
-	{
-		Logger::pushContext("Camera and model config");
-
-		viewMatrix = glm::lookAt(glm::vec3(0.0f, -120.0f, 150.0f), glm::vec3(0.0f, -80.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-		float aspectRatio = static_cast<float>(window.getSwapchainExtent().width) / static_cast<float>(window.getSwapchainExtent().height);
-		projMatrix = glm::perspective(glm::radians(70.0f), aspectRatio, 0.1f, 500.0f);
-
-		for (uint32_t i = 0; i < 5; i++)
 		{
-			float fi = static_cast<float>(i);
-			modelMatrices.emplace_back(1.0f);
-			modelMatrices.back() = glm::translate(modelMatrices.back(), glm::vec3(10.0f + -30.0f * fi, -20.0f * fi, -30.0f * fi));
-			modelMatrices.back() = glm::rotate(modelMatrices.back(), glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-			modelMatrices.back() = glm::scale(modelMatrices.back(), {1.0, -1.0, 1.0});
-
-			float value = fi / 5.0f;
-
-			modelColors.emplace_back(value, 1.0f - value, 1.0f);
+			void* dataPtr = device.mapStagingBuffer(objectBuffer.getSize(), 0);
+			memcpy(dataPtr, vertices.data(), sizeof(vertices[0]) * vertices.size());
+			memcpy(static_cast<char*>(dataPtr) + sizeof(vertices[0]) * vertices.size(), indices.data(), sizeof(indices[0]) * indices.size());
+			device.dumpStagingBuffer(objectBufferID, objectBuffer.getSize(), 0, 0);
 		}
 
-		Logger::popContext();
-	}
+		// Configure depth buffer
+		const VkFormat depthFormat = device.getGPU().findSupportedFormat({VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT}, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+		auto [depthImage, depthImageView] = createDepthImage(depthFormat);
 
-	// Main loop
-	uint64_t frameCounter = 0;
-	Logger::setRootContext("Frame" + std::to_string(frameCounter));
-	while (!window.shouldClose())
-	{
-		window.pollEvents();
+		// Create frame buffers
+		std::vector<uint32_t> framebuffers{};
+		framebuffers.resize(window.getImageCount());
+		for (uint32_t i = 0; i < window.getImageCount(); i++)
+			framebuffers[i] = createFramebuffer(renderPassID, window.getImageView(i), depthImageView);
 
-		inFlightFence.wait();
+		// Create sync objects
+		uint32_t imageAvailableSemaphoreID = device.createSemaphore();
+		uint32_t renderFinishedSemaphoreID = device.createSemaphore();
+		uint32_t inFlightFenceID = device.createFence(true);
+		VulkanFence& inFlightFence = device.getFence(inFlightFenceID);
 
-		if (window.getAndResetSwapchainRebuildFlag())
+		VulkanQueue graphicsQueue = device.getQueue(graphicsQueuePos);
+		VulkanQueue presentQueue = device.getQueue(presentQueuePos);
+		VulkanCommandBuffer& graphicsBuffer = device.getCommandBuffer(graphicsBufferID, 0);
+
+		// Configure push constant data
 		{
-			Logger::pushContext("Swapchain resources rebuild");
-			device.freeImage(depthImage);
-			std::tie(depthImage, depthImageView) = createDepthImage(depthFormat);
+			Logger::pushContext("Camera and model config");
 
-			for (uint32_t i = 0; i < window.getImageCount(); i++)
-			{
-				device.freeFramebuffer(framebuffers[i]);
-				framebuffers[i] = createFramebuffer(renderPassID, window.getImageView(i), depthImageView);
-			}
-
+			viewMatrix = glm::lookAt(glm::vec3(0.0f, -120.0f, 150.0f), glm::vec3(0.0f, -80.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 			float aspectRatio = static_cast<float>(window.getSwapchainExtent().width) / static_cast<float>(window.getSwapchainExtent().height);
 			projMatrix = glm::perspective(glm::radians(70.0f), aspectRatio, 0.1f, 500.0f);
+
+			for (uint32_t i = 0; i < 5; i++)
+			{
+				float fi = static_cast<float>(i);
+				modelMatrices.emplace_back(1.0f);
+				modelMatrices.back() = glm::translate(modelMatrices.back(), glm::vec3(10.0f + -30.0f * fi, -20.0f * fi, -30.0f * fi));
+				modelMatrices.back() = glm::rotate(modelMatrices.back(), glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+				modelMatrices.back() = glm::scale(modelMatrices.back(), {1.0, -1.0, 1.0});
+
+				float value = fi / 5.0f;
+
+				modelColors.emplace_back(value, 1.0f - value, 1.0f);
+			}
 
 			Logger::popContext();
 		}
 
-		uint32_t nextImage = window.acquireNextImage(imageAvailableSemaphoreID, nullptr);
-		if (nextImage == UINT32_MAX)
+		// Main loop
+		uint64_t frameCounter = 0;
+		Logger::setRootContext("Frame" + std::to_string(frameCounter));
+		while (!window.shouldClose())
 		{
+			window.pollEvents();
+
+			inFlightFence.wait();
+
+			if (window.getAndResetSwapchainRebuildFlag())
+			{
+				Logger::pushContext("Swapchain resources rebuild");
+				device.freeImage(depthImage);
+				std::tie(depthImage, depthImageView) = createDepthImage(depthFormat);
+
+				for (uint32_t i = 0; i < window.getImageCount(); i++)
+				{
+					device.freeFramebuffer(framebuffers[i]);
+					framebuffers[i] = createFramebuffer(renderPassID, window.getImageView(i), depthImageView);
+				}
+
+				float aspectRatio = static_cast<float>(window.getSwapchainExtent().width) / static_cast<float>(window.getSwapchainExtent().height);
+				projMatrix = glm::perspective(glm::radians(70.0f), aspectRatio, 0.1f, 500.0f);
+
+				Logger::popContext();
+			}
+
+			uint32_t nextImage = window.acquireNextImage(imageAvailableSemaphoreID, nullptr);
+			if (nextImage == UINT32_MAX)
+			{
+				inFlightFence.reset();
+				frameCounter++;
+				continue;
+			}
+
 			inFlightFence.reset();
+
+			recordCommandBuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBufferID);
+
+			graphicsBuffer.submit(graphicsQueue, {{imageAvailableSemaphoreID, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}}, {renderFinishedSemaphoreID}, inFlightFenceID);
+			window.present(presentQueue, nextImage, renderFinishedSemaphoreID);
+
 			frameCounter++;
-			continue;
 		}
 
-		inFlightFence.reset();
+		device.waitIdle();
 
-		recordCommandBuffer(graphicsBufferID, renderPassID, framebuffers[nextImage], depthPipeline, colorPipeline, pipelineLayout, objectBufferID);
-
-		graphicsBuffer.submit(graphicsQueue, {{imageAvailableSemaphoreID, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}}, {renderFinishedSemaphoreID}, inFlightFenceID);
-		window.present(presentQueue, nextImage, renderFinishedSemaphoreID);
-
-		frameCounter++;
+		// Free resources
+		Logger::setRootContext("Resource cleanup");
+		window.free();
+		VulkanContext::free();
 	}
-
-	device.waitIdle();
-
-	// Free resources
-	Logger::setRootContext("Resource cleanup");
-	window.free();
-	VulkanContext::free();
+	catch (const std::exception& e)
+	{
+		std::cerr << e.what() << '\n';
+		return 1;
+	}
 	return 0;
 }

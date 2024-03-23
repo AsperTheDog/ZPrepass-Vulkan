@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include <vulkan/vk_enum_string_helper.h>
+
 #include "vulkan_device.hpp"
 #include "vulkan_gpu.hpp"
 #include "vulkan_queues.hpp"
@@ -38,9 +40,9 @@ void VulkanContext::init(const uint32_t vulkanApiVersion, const bool enableValid
 	instanceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 	instanceCreateInfo.ppEnabledExtensionNames = extensions.data();
 
-	if (vkCreateInstance(&instanceCreateInfo, nullptr, &m_vkHandle) != VK_SUCCESS)
+	if (const VkResult ret = vkCreateInstance(&instanceCreateInfo, nullptr, &m_vkHandle); ret != VK_SUCCESS)
 	{
-		throw std::runtime_error("Failed to create Vulkan instance");
+		throw std::runtime_error(std::string("Failed to create Vulkan instance, error code: ") + string_VkResult(ret));
 	}
 }
 

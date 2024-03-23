@@ -398,4 +398,4 @@ FodyWeavers.xsd
 *.sln.iml
 
 # Custom
-!VkPlayground/models/stanfordDragon.obj
+!ZPrepass/models/stanfordDragon.obj
