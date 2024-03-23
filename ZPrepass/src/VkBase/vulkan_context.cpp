@@ -105,9 +105,9 @@ uint32_t VulkanContext::createDevice(const VulkanGPU gpu, const QueueFamilySelec
 	deviceCreateInfo.pEnabledFeatures = &features;
 
 	VkDevice device;
-	if (vkCreateDevice(gpu.m_vkHandle, &deviceCreateInfo, nullptr, &device) != VK_SUCCESS)
+	if (const VkResult res = vkCreateDevice(gpu.m_vkHandle, &deviceCreateInfo, nullptr, &device); res != VK_SUCCESS)
 	{
-		throw std::runtime_error("Failed to create logical device");
+		throw std::runtime_error(std::string("Failed to create logical device, error: ") + string_VkResult(res));
 	}
 
 	m_devices.push_back({gpu, device});

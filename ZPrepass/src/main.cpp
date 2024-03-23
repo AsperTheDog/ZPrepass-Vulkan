@@ -182,9 +182,9 @@ std::tuple<uint32_t, uint32_t, uint32_t> createGraphicsPipelines(const uint32_t 
 	VulkanPipelineBuilder builder{&VulkanContext::getDevice(deviceID)};
 
 	builder.addVertexBinding(binding);
-	builder.setInputAssemblyState(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_FALSE);
+	builder.setInputAssemblyState(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_FALSE);
 	builder.setViewportState(1, 1);
-	builder.setRasterizationState(VK_POLYGON_MODE_FILL);
+	builder.setRasterizationState(VK_POLYGON_MODE_FILL, VK_CULL_MODE_FRONT_BIT, VK_FRONT_FACE_CLOCKWISE);
 	builder.setMultisampleState(VK_SAMPLE_COUNT_1_BIT, VK_FALSE, 1.0f);
 	builder.setDepthStencilState(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
 	builder.addColorBlendAttachment(colorBlendAttachment);
